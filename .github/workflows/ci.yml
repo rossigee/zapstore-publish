@@ -47,7 +47,7 @@ jobs:
             const {parse} = require("yaml");
             const action = parse(readFileSync("action.yml", "utf8"));
             if (action.runs?.using !== "node24") throw new Error("runs.using must be node24");
-            if (action.runs?.main !== "src/main.ts") throw new Error("runs.main must be src/main.ts");
+            if (action.runs?.main !== "dist/index.js") throw new Error("runs.main must be dist/index.js");
             for (const field of ["name", "description"]) {
               if (!action[field]) throw new Error(`action.yml is missing ${field}`);
             }
@@ -61,6 +61,28 @@ jobs:
             console.log("inputs:", Object.keys(action.inputs).join(", "));
           '
 
+      # The action ships a bundle, not node_modules, so a dependency that is
+      # imported but not bundled only fails for consumers. This catches the
+      # committed bundle drifting from source, which would otherwise be
+      # published silently.
+      - name: Check the committed bundle matches the source
+        run: |
+          npm run build
+          git diff --exit-code -- dist/ \
+            || { echo "::error::dist/ is stale. Run 'npm run build' and commit the result."; exit 1; }
+
+      - name: Check the bundle imports nothing at runtime
+        run: |
+          # A bare specifier surviving the bundle means a dependency was left
+          # external, which resolves locally and fails for consumers.
+          if grep -nE "(^|[^.\"'])\b(require\(|from )[\"']([a-z@][^./\"']*)" dist/index.js \
+               | grep -vE "[\"'](node:|assert|util|events|fs|path|crypto|os|stream|buffer|https?)[^\"']*[\"']" \
+               | grep -vE "createRequire"; then
+            echo "::error::dist/index.js still references external packages."
+            exit 1
+          fi
+          echo "bundle is self-contained"
+
   self-test:
     name: Run the action on the runner
     runs-on: ubuntu-latest
@@ -73,11 +95,17 @@ jobs:
 
       - run: npm ci
 
-      # The whole design rests on this: the action runs TypeScript source
-      # directly, so the runner's Node has to erase type annotations on load.
-      # ubuntu-latest ships Node 22 by default, so this asserts that
-      # `runs.using: node24` really does hand the action Node 24 and that an
-      # unbuilt checkout is executable. The step logs its Node version.
+      - run: npm run build
+
+      # Consumers receive the action without node_modules, so the self-test
+      # has to as well. Running in-repo after `npm ci` hides any dependency
+      # that is imported but not bundled: it resolves locally and fails only
+      # once someone uses the action from another repository. Moving the
+      # directory aside reproduces that exactly, and is what caught the
+      # unbundled `yaml` import that broke the first real Zapstore publish.
+      - name: Hide node_modules to match a consumer checkout
+        run: mv node_modules .node_modules_hidden
+
       - name: Prepare a fixture APK and listing
         run: |
           mkdir -p .selftest
@@ -106,3 +134,7 @@ jobs:
           test "${{ steps.zapstore.outputs.apk-sha256 }}" = "28b9bd19e5e235b20e85755fbe806162d1da42ab0fb538cbc7e77d7d27166168"
           test "${{ steps.zapstore.outputs.certificate-sha256 }}" = "925d2fefa4c7ab702ad35df1cf35ba7976faa7f2b2e0dd76d9b35d0859fe5bf9"
           echo "APK sha256 and certificate fingerprint both match the expected values"
+
+      - name: Report the Node version the action ran on
+        if: always()
+        run: mv .node_modules_hidden node_modules
