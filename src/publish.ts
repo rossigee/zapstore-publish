@@ -207,21 +207,15 @@ export async function publishRelease(options: PublishOptions): Promise<Published
 
   const signOnly = options.signOnly === true;
 
-  // In sign mode nothing is uploaded: those writes go to a shared CDN, which is
-  // what this mode exists to avoid. The URLs are still populated so the signed
-  // events have the shape they will have once published.
-  const apkUrl = signOnly
-    ? (apk.url ?? apkSha256)
-    : apk.url ?? (await upload(apk.origin));
-  const iconUrl = signOnly ? config.icon : config.icon ? await upload(config.icon) : undefined;
-  const imageUrls: string[] = [];
-  for (const image of config.images ?? []) {
-    imageUrls.push(signOnly ? image : await upload(image));
-  }
-
   if (!signOnly && !apk.url && !blossomUrl) {
     throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
   }
+
+  // In sign mode nothing is uploaded: those writes go to a shared CDN, which is
+  // what this mode exists to avoid. The URLs are still populated so the signed
+  // events have the shape they will have once published.
+  const uploadOrPassThrough = async (reference: string): Promise<string> =>
+    signOnly ? reference : upload(reference);
 
   const pool = new SimplePool();
   try {
@@ -239,6 +233,45 @@ export async function publishRelease(options: PublishOptions): Promise<Published
       }
       return signed;
     };
+
+    const appEventTemplate = (icon: string | undefined, images: string[]): EventTemplate =>
+      buildSoftwareAppEvent({
+        packageId: manifest.package,
+        name: config.name ?? manifest.label ?? manifest.package,
+        description: config.description ?? "",
+        summary: config.summary,
+        icon,
+        images,
+        tags: config.tags,
+        website: config.website,
+        repository: config.repository,
+        platforms,
+        license: config.license,
+        communities: config.communities,
+        createdAt,
+      });
+
+    // The app event is published before anything is uploaded, and deliberately
+    // so. The relay whitelists a publisher when the app event reaches it: it
+    // fetches zapstore.yaml from the repository and checks the pubkey. Blob
+    // uploads are refused until that has happened, so uploading first leaves a
+    // brand-new npub permanently stuck on
+    // "403 authenticated pubkey is not allowed" with no way to trigger the
+    // whitelist that would unblock it.
+    //
+    // This first version carries no uploaded media, because none exists yet. It
+    // is a replaceable kind 0 keyed on the package id, so the enriched version
+    // published below replaces it.
+    await sign(appEventTemplate(undefined, []));
+
+    const apkUrl = signOnly
+      ? (apk.url ?? apkSha256)
+      : apk.url ?? (await upload(apk.origin));
+    const iconUrl = config.icon ? await uploadOrPassThrough(config.icon) : undefined;
+    const imageUrls: string[] = [];
+    for (const image of config.images ?? []) {
+      imageUrls.push(await uploadOrPassThrough(image));
+    }
 
     // The asset goes first: the release references its event id.
     const assetEvent = await sign(
@@ -271,23 +304,7 @@ export async function publishRelease(options: PublishOptions): Promise<Published
       }),
     );
 
-    const appEvent = await sign(
-      buildSoftwareAppEvent({
-        packageId: manifest.package,
-        name: config.name ?? manifest.label ?? manifest.package,
-        description: config.description ?? "",
-        summary: config.summary,
-        icon: iconUrl,
-        images: imageUrls,
-        tags: config.tags,
-        website: config.website,
-        repository: config.repository,
-        platforms,
-        license: config.license,
-        communities: config.communities,
-        createdAt,
-      }),
-    );
+    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls));
 
     return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {

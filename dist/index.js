@@ -16550,15 +16550,10 @@ async function publishRelease(options) {
     return base;
   }
   const signOnly = options.signOnly === true;
-  const apkUrl = signOnly ? apk.url ?? apkSha256 : apk.url ?? await upload(apk.origin);
-  const iconUrl = signOnly ? config.icon : config.icon ? await upload(config.icon) : void 0;
-  const imageUrls = [];
-  for (const image of config.images ?? []) {
-    imageUrls.push(signOnly ? image : await upload(image));
-  }
   if (!signOnly && !apk.url && !blossomUrl) {
     throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
   }
+  const uploadOrPassThrough = async (reference) => signOnly ? reference : upload(reference);
   const pool = new SimplePool();
   try {
     const signer = options.signer;
@@ -16573,6 +16568,28 @@ async function publishRelease(options) {
       }
       return signed;
     };
+    const appEventTemplate = (icon, images) => buildSoftwareAppEvent({
+      packageId: manifest.package,
+      name: config.name ?? manifest.label ?? manifest.package,
+      description: config.description ?? "",
+      summary: config.summary,
+      icon,
+      images,
+      tags: config.tags,
+      website: config.website,
+      repository: config.repository,
+      platforms,
+      license: config.license,
+      communities: config.communities,
+      createdAt
+    });
+    await sign(appEventTemplate(void 0, []));
+    const apkUrl = signOnly ? apk.url ?? apkSha256 : apk.url ?? await upload(apk.origin);
+    const iconUrl = config.icon ? await uploadOrPassThrough(config.icon) : void 0;
+    const imageUrls = [];
+    for (const image of config.images ?? []) {
+      imageUrls.push(await uploadOrPassThrough(image));
+    }
     const assetEvent = await sign(
       buildSoftwareAssetEvent({
         packageId: manifest.package,
@@ -16601,23 +16618,7 @@ async function publishRelease(options) {
         createdAt
       })
     );
-    const appEvent = await sign(
-      buildSoftwareAppEvent({
-        packageId: manifest.package,
-        name: config.name ?? manifest.label ?? manifest.package,
-        description: config.description ?? "",
-        summary: config.summary,
-        icon: iconUrl,
-        images: imageUrls,
-        tags: config.tags,
-        website: config.website,
-        repository: config.repository,
-        platforms,
-        license: config.license,
-        communities: config.communities,
-        createdAt
-      })
-    );
+    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls));
     return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {
     if (!signOnly) pool.close(options.relays);
