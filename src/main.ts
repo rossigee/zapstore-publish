@@ -13,6 +13,7 @@ import { loadConfig, npubFor, syncConfigPubkey } from "./config.ts";
 import { createLocalSigner, decodeSecretKey, isBunkerUrl, parseBunkerUrl } from "./nostr/signer.ts";
 import { createBunkerSigner } from "./nostr/bunker.ts";
 import { PublishError, publishRelease } from "./publish.ts";
+import { installUnhandledRejectionGuard } from "./unhandled.ts";
 
 function input(name: string): string {
   return process.env[`INPUT_${name.toUpperCase().replace(/ /g, "_")}`]?.trim() ?? "";
@@ -150,6 +151,8 @@ async function main(): Promise<void> {
     await signer?.close();
   }
 }
+
+installUnhandledRejectionGuard(log, (message) => process.stderr.write(message));
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);

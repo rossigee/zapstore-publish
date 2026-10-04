@@ -16625,6 +16625,29 @@ async function publishRelease(options) {
   }
 }
 
+// src/unhandled.ts
+function isBenignRelayClose(reason) {
+  return reason instanceof Error && reason.message === "relay connection closed by us";
+}
+function createUnhandledRejectionHandler(log2, write, fail) {
+  return (reason) => {
+    if (isBenignRelayClose(reason)) {
+      log2("relay closed after publishing; nothing left to do");
+      return;
+    }
+    write(`::error::unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}
+`);
+    fail();
+  };
+}
+function installUnhandledRejectionGuard(log2, write) {
+  const listener = createUnhandledRejectionHandler(log2, write, () => {
+    process.exitCode = 1;
+  });
+  process.on("unhandledRejection", listener);
+  return () => process.off("unhandledRejection", listener);
+}
+
 // src/main.ts
 function input(name) {
   return process.env[`INPUT_${name.toUpperCase().replace(/ /g, "_")}`]?.trim() ?? "";
@@ -16726,6 +16749,7 @@ async function main() {
     await signer?.close();
   }
 }
+installUnhandledRejectionGuard(log, (message) => process.stderr.write(message));
 main().catch((error) => {
   const message = error instanceof Error ? error.message : String(error);
   process.stderr.write(`::error::${message}
