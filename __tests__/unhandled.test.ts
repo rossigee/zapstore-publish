@@ -2,9 +2,12 @@ import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  beginTeardown,
   createUnhandledRejectionHandler,
   installUnhandledRejectionGuard,
   isBenignRelayClose,
+  isTeardownNoise,
+  resetTeardown,
 } from "../src/unhandled.ts";
 
 // Regression: a real release run uploaded all five screenshots and published all
@@ -51,8 +54,49 @@ describe("unhandled rejection guard", () => {
 
     assert.equal(written.length, 0, "must not be reported as an error");
     assert.equal(logged.length, 1, "should be noted");
-    assert.match(logged[0]!, /relay closed/);
+    assert.match(logged[0]!, /relay connection closed by us/);
     assert.equal(failures, 0, "must not fail a publish that already succeeded");
+  });
+
+  // The regression that actually bit: after uploads and all three events
+  // published, closing the pool produced this and failed the step.
+  test("tolerates a send on a closed connection only during teardown", () => {
+    const make = () => {
+      const logged: string[] = [];
+      const written: string[] = [];
+      let failures = 0;
+      return {
+        logged,
+        written,
+        get failures() { return failures; },
+        handler: createUnhandledRejectionHandler(
+          (m) => logged.push(m),
+          (m) => written.push(m),
+          () => { failures += 1; },
+        ),
+      };
+    };
+
+    const noise = new Error(
+      "SendingOnClosedConnection: Tried to send message '[\"EVENT\",…]' on a closed connection to wss://relay.zapstore.dev/.",
+    );
+    assert.equal(isTeardownNoise(noise), true);
+
+    // Before teardown: a real defect, must fail.
+    resetTeardown();
+    const before = make();
+    before.handler(noise);
+    assert.equal(before.failures, 1, "must fail outside teardown");
+    assert.equal(before.written.length, 1);
+
+    // During teardown: tolerated, because every publish has already resolved.
+    beginTeardown();
+    const after = make();
+    after.handler(noise);
+    assert.equal(after.failures, 0, "must not fail during teardown");
+    assert.equal(after.written.length, 0);
+    assert.equal(after.logged.length, 1);
+    resetTeardown();
   });
 
   test("handles a non-Error rejection without throwing", () => {

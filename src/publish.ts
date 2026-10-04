@@ -14,6 +14,7 @@ import { SimplePool, nip19, type EventTemplate, type VerifiedEvent } from "nostr
 import { readManifest } from "./apk/manifest.ts";
 import { signingCertificateSha256 } from "./apk/signing-block.ts";
 import { contentTypeForPath, sha256Hex, uploadBlob } from "./blossom.ts";
+import { beginTeardown } from "./unhandled.ts";
 import { extractReleaseNotes, type ListingConfig } from "./config.ts";
 import {
   buildSoftwareAppEvent,
@@ -309,6 +310,11 @@ export async function publishRelease(options: PublishOptions): Promise<Published
     return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {
     // Only touches connections when a pool was actually used.
-    if (!signOnly) pool.close(options.relays);
+    if (!signOnly) {
+      // Reached only once every publish has resolved, so from here a rejection
+      // about the connection going away cannot be a publish failure.
+      beginTeardown();
+      pool.close(options.relays);
+    }
   }
 }
