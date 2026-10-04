@@ -172,7 +172,12 @@ export async function publishRelease(options: PublishOptions): Promise<Published
     if (/^https?:\/\//i.test(reference)) return reference;
     if (!blossomUrl) throw new PublishError(`cannot upload ${reference} without a Blossom URL`);
     const data = await readFile(reference);
-    const descriptor = await uploadBlob(data, contentTypeForPath(reference), { baseUrl: blossomUrl });
+    const descriptor = await uploadBlob(data, contentTypeForPath(reference), {
+      baseUrl: blossomUrl,
+      // The CDN authorises uploads against the publishing identity. Without
+      // this the request goes out unauthenticated and is refused with 401.
+      signer: options.signer,
+    });
     log(`uploaded ${reference} (${data.byteLength} bytes)`);
     return descriptor.url;
   };
