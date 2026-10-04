@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { extractReleaseNotes, loadConfig, parseConfig, ConfigError } from "../src/config.ts";
+import { KIND_SOFTWARE_APP } from "../src/nostr/events.ts";
 import { inspectApk, publishRelease } from "../src/publish.ts";
 import { createLocalSigner } from "../src/nostr/signer.ts";
 import { getPublicKey, nip19 } from "nostr-tools";
@@ -225,8 +226,43 @@ describe("publishRelease in sign mode", () => {
     // signing lines, so any bare "published kind" line would mean a real relay
     // write happened.
     assert.equal(messages.filter((m) => /^published kind/.test(m)).length, 0);
-    assert.equal(messages.filter((m) => /not published/.test(m)).length, 3);
+    // Four, not three: the app event is signed twice, once before anything is
+    // uploaded to trigger relay whitelisting and once with the uploaded media.
+    assert.equal(messages.filter((m) => /not published/.test(m)).length, 4);
     assert.equal(messages.filter((m) => /^uploaded /.test(m)).length, 0);
+  });
+
+  // Regression: the relay whitelists a publisher when the app event reaches it,
+  // and refuses blob uploads until it has. Publishing the app event last left a
+  // new npub stuck on "403 authenticated pubkey is not allowed" with no way to
+  // trigger the whitelist.
+  test("signs the app event before anything is uploaded", async () => {
+    const icon = join(mkdtempSync(join(tmpdir(), "zapstore-order-")), "icon.png");
+    writeFileSync(icon, Buffer.from("fake png"));
+    const { apk, configPath } = scaffold({ icon });
+    const config = await loadConfig(configPath);
+    const signer = createLocalSigner(new Uint8Array(32).fill(9));
+
+    const messages: string[] = [];
+    await publishRelease({
+      config,
+      signer,
+      apk,
+      relays: [],
+      signOnly: true,
+      log: (message) => messages.push(message),
+    });
+
+    const appSigns = messages
+      .map((m, i) => (/^signed kind (\d+)/.exec(m)?.[1] === String(KIND_SOFTWARE_APP) ? i : -1))
+      .filter((i) => i >= 0);
+    assert.equal(appSigns.length, 2, "the app event is signed twice");
+    for (const i of appSigns) {
+      assert.ok(
+        !messages.slice(0, i).some((m) => /^uploaded /.test(m)),
+        "an app event was signed after an upload",
+      );
+    }
   });
 
   test("needs a signer", async () => {
