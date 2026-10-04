@@ -10,6 +10,7 @@
   "main": "src/main.ts",
   "files": [
     "src",
+    "dist",
     "action.yml",
     "README.md",
     "LICENSE"
@@ -17,7 +18,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test \"__tests__/**/*.test.ts\"",
-    "all": "npm run typecheck && npm run test"
+    "all": "npm run typecheck && npm run test && npm run build",
+    "build": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=esm --outfile=dist/index.js --banner:js=\"import{createRequire as __cr}from'node:module';const require=__cr(import.meta.url);\""
   },
   "dependencies": {
     "@noble/curves": "^2.4.0",
@@ -29,6 +31,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.19.1",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
   }
 }

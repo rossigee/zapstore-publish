@@ -3,10 +3,15 @@
 A GitHub Action that publishes an Android release to [Zapstore](https://zapstore.dev),
 the open Android app store built on Nostr.
 
-It is a native TypeScript implementation: no `zsp` binary, no Go toolchain, and
-no `dist/` bundle to keep in sync. The Action runs its source directly on the
-runner, which Node 24 can do because TypeScript type annotations are erased at
-load time.
+It is a native TypeScript implementation: no `zsp` binary and no Go toolchain.
+
+The dependencies are bundled into a single committed `dist/index.js` with esbuild.
+GitHub Actions does not run `npm install` for an action, so anything left
+external resolves during in-repo testing and then fails for consumers. Vendoring
+`node_modules` was the alternative and ran to 52 MB per invocation; the bundle is
+under 600 KB. CI rebuilds and fails if `dist/` is stale, and the self-test runs
+with `node_modules` moved aside so a missing bundle shows up as a broken test
+rather than a broken publish.
 
 ```yaml
 - uses: rossigee/zapstore-publish@v1
@@ -170,7 +175,11 @@ checked against something independent.
 npm ci
 npm run typecheck
 npm test
+npm run build
 ```
+
+`npm run build` regenerates `dist/index.js`, which is committed. CI runs it and
+fails if the result differs from what is checked in.
 
 ## Limitations
 
