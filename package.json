@@ -1,0 +1,34 @@
+{
+  "name": "zapstore-publish",
+  "version": "0.1.0",
+  "description": "GitHub Action that publishes Android releases to the Zapstore Nostr relay",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "main": "src/main.ts",
+  "files": [
+    "src",
+    "action.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"__tests__/**/*.test.ts\"",
+    "all": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.4.0",
+    "@noble/hashes": "^2.4.0",
+    "android-axml-parser": "^0.1.0",
+    "fflate": "^0.8.3",
+    "nostr-tools": "^2.25.2",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "typescript": "^7.0.2"
+  }
+}

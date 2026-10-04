@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Typecheck and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  action-metadata:
+    name: Validate action.yml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The action runs its TypeScript directly, so a broken main path or a
+      # malformed metadata file would only surface when a consumer tried it.
+      - name: Check the action entry point resolves
+        run: |
+          test -f src/main.ts
+          test -f action.yml
+
+      - name: Parse action.yml
+        run: |
+          node -e '
+            const {readFileSync} = require("node:fs");
+            const {parse} = require("yaml");
+            const action = parse(readFileSync("action.yml", "utf8"));
+            if (action.runs?.using !== "node24") throw new Error("runs.using must be node24");
+            if (action.runs?.main !== "src/main.ts") throw new Error("runs.main must be src/main.ts");
+            for (const field of ["name", "description"]) {
+              if (!action[field]) throw new Error(`action.yml is missing ${field}`);
+            }
+            console.log("action.yml OK:", Object.keys(action.inputs ?? {}).join(", "));
+          '

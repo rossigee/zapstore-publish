@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+
+    // The action runs as TypeScript directly on the runner: `runs.using: node24`
+    // with `main: src/main.ts`. Node strips the types itself, so there is no
+    // bundler and no dist/ to keep in sync. That only works for syntax erasable
+    // without transformation, and this flag makes tsc reject everything else
+    // here rather than letting it fail at runtime on the runner.
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src/**/*.ts", "__tests__/**/*.ts"]
+}

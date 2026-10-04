@@ -1,0 +1,69 @@
+name: Publish to Zapstore
+description: >-
+  Publish an Android APK to the Zapstore Nostr relay as a software release,
+  without requiring the zsp binary or a Go toolchain.
+author: rossigee
+
+branding:
+  icon: upload-cloud
+  color: purple
+
+inputs:
+  config:
+    description: Path to the zapstore.yaml listing config.
+    required: false
+    default: zapstore.yaml
+
+  sign-with:
+    description: >-
+      Nostr secret key (nsec1... or hex) or a NIP-46 bunker:// URL. Falls back
+      to the SIGN_WITH environment variable, which is usually the better place
+      for a credential.
+    required: false
+
+  apk:
+    description: >-
+      Path or https URL of the APK to publish. When omitted, the newest release
+      asset of the repository is used, filtered by zapstore.yaml's `match`.
+    required: false
+
+  relays:
+    description: Comma-separated relay URLs to publish to.
+    required: false
+    default: wss://relay.zapstore.dev
+
+  blossom:
+    description: Blossom CDN base URL used for icon and screenshot uploads.
+    required: false
+    default: https://cdn.zapstore.dev
+
+  mode:
+    description: >-
+      publish  resolve the APK, upload media and publish the release events
+      check    resolve and validate everything, then stop without publishing
+    required: false
+    default: publish
+
+  skip-if-unconfigured:
+    description: >-
+      When true, exit successfully with a notice if no signer is configured,
+      instead of failing. Useful for adopting the step before the Nostr
+      identity exists.
+    required: false
+    default: "false"
+
+outputs:
+  app-event-id:
+    description: Event id of the published kind 32267 software application event.
+  release-event-id:
+    description: Event id of the published kind 30063 software release event.
+  asset-event-id:
+    description: Event id of the published kind 3063 software asset event.
+  apk-sha256:
+    description: Lowercase hex SHA-256 of the published APK.
+  certificate-sha256:
+    description: Lowercase hex SHA-256 of the APK signing certificate.
+
+runs:
+  using: node24
+  main: src/main.ts
