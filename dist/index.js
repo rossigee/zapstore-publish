@@ -16126,27 +16126,6 @@ function sha256Hex(data) {
 function blobUrl(baseUrl, sha2562) {
   return `${baseUrl.replace(/\/+$/, "")}/${sha2562}`;
 }
-var UPLOAD_AUTH_TTL_SECONDS = 3600;
-async function uploadAuthHeader(sha2562, signer, now2 = () => Math.floor(Date.now() / 1e3)) {
-  const createdAt = now2();
-  const event = await signer.signEvent({
-    kind: 24242,
-    created_at: createdAt,
-    content: `Upload ${sha2562}`,
-    tags: [
-      // `t` is the action, not a media type: the server matches it against
-      // get/upload/list/delete and answers "invalid 't' tag" otherwise. `x`
-      // names this blob so the server can check the authorisation covers the
-      // body being sent, and `expiration` must be in the future or it is
-      // rejected as expired.
-      ["t", "upload"],
-      ["x", sha2562],
-      ["expiration", String(createdAt + UPLOAD_AUTH_TTL_SECONDS)]
-    ]
-  });
-  const encoded = Buffer.from(JSON.stringify(event), "utf8").toString("base64");
-  return `Nostr ${encoded}`;
-}
 async function uploadBlob(data, contentType, options) {
   const sha2562 = sha256Hex(data);
   const endpoint = `${options.baseUrl.replace(/\/+$/, "")}/upload`;
@@ -16154,22 +16133,11 @@ async function uploadBlob(data, contentType, options) {
   const headers = {
     "Content-Type": contentType,
     "Content-Length": String(data.byteLength),
-    // Both spellings of the blob hash are sent, in plain hex rather than the
-    // RFC 9530 base64 form. Blossom servers disagree on the header name: the
-    // version of `blossy` that cdn.zapstore.dev runs reads `Content-Digest` and
-    // rejects a request without it with
-    // "'Content-Digest' header is missing or empty", while later ones read
-    // `X-SHA-256`. The value is identical and both are cheap, so sending both
-    // works against either. The hash lets the server reject a body that does not
-    // match what we claim, and short-circuit when the blob is already stored.
-    "Content-Digest": sha2562,
+    // Lets the server reject a body that does not match what we claim, and lets
+    // it short-circuit when the blob is already stored.
     "X-SHA-256": sha2562
   };
-  if (options.signer) {
-    headers.Authorization = await uploadAuthHeader(sha2562, options.signer, options.now);
-  } else if (options.token) {
-    headers.Authorization = `Bearer ${options.token}`;
-  }
+  if (options.token) headers.Authorization = `Bearer ${options.token}`;
   const response = await doFetch(endpoint, { method: "PUT", headers, body: data });
   if (!response.ok) {
     const reason = response.headers.get("X-Reason");
@@ -16520,12 +16488,7 @@ async function publishRelease(options) {
     if (/^https?:\/\//i.test(reference)) return reference;
     if (!blossomUrl) throw new PublishError(`cannot upload ${reference} without a Blossom URL`);
     const data = await readFile3(reference);
-    const descriptor = await uploadBlob(data, contentTypeForPath(reference), {
-      baseUrl: blossomUrl,
-      // The CDN authorises uploads against the publishing identity. Without
-      // this the request goes out unauthenticated and is refused with 401.
-      signer: options.signer
-    });
+    const descriptor = await uploadBlob(data, contentTypeForPath(reference), { baseUrl: blossomUrl });
     log2(`uploaded ${reference} (${data.byteLength} bytes)`);
     return descriptor.url;
   };
