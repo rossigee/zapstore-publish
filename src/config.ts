@@ -6,9 +6,12 @@
  * action.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { parse } from "yaml";
 import { existsSync } from "node:fs";
+import { getPublicKey, nip19 } from "nostr-tools";
+
+import { isBunkerUrl } from "./nostr/signer.ts";
 
 export interface ListingConfig {
   /** Source repository URL, recorded in the listing for provenance. */
@@ -68,6 +71,44 @@ const KNOWN_FIELDS = new Set([
  * here with a clear message beats an event the relay silently rejects.
  */
 const PLACEHOLDER = /^REPLACE_WITH_|^<.*>$/;
+
+/**
+ * Derives the npub for a signer credential.
+ *
+ * Lets a workflow inject the correct `pubkey` into `zapstore.yaml` at publish
+ * time instead of committing one by hand, so the config and the signing key
+ * cannot drift apart when the key is rotated. The npub is public, and it never
+ * has to pass through a log.
+ */
+export function npubFor(signWith: string): string | undefined {
+  const trimmed = signWith.trim();
+  if (!trimmed || isBunkerUrl(trimmed)) return undefined;
+  if (/^[0-9a-f]{64}$/i.test(trimmed)) {
+    // Hex is a secret key, matching decodeSecretKey. Encoding the hex directly
+    // would yield the npub of the private key's own bytes, which is a different
+    // identity and would be rejected during whitelisting.
+    return nip19.npubEncode(getPublicKey(Uint8Array.from(Buffer.from(trimmed.toLowerCase(), "hex"))));
+  }
+  if (/^nsec1/i.test(trimmed)) {
+    const decoded = nip19.decode(trimmed);
+    if (decoded.type !== "nsec" || !(decoded.data instanceof Uint8Array)) return undefined;
+    return nip19.npubEncode(getPublicKey(decoded.data));
+  }
+  return undefined;
+}
+
+/**
+ * Rewrites the `pubkey` field of a config file.
+ *
+ * Used to inject the signer identity into a committed config before publishing,
+ * so the file stays free of hand-copied keys.
+ */
+export function injectPubkey(yamlText: string, pubkey: string): string {
+  const line = /^pubkey:.*$/m;
+  if (line.test(yamlText)) return yamlText.replace(line, `pubkey: ${pubkey}`);
+  // No pubkey field yet: append one, keeping any trailing comment block intact.
+  return `${yamlText.replace(/\s*$/, "")}\n\n# Injected at publish time from the signing key.\npubkey: ${pubkey}\n`;
+}
 
 function asStringArray(value: unknown, field: string): string[] | undefined {
   if (value === undefined || value === null) return undefined;
@@ -151,6 +192,32 @@ export function parseConfig(source: string, origin = "zapstore.yaml"): ListingCo
   }
 
   return config;
+}
+
+/**
+ * Replaces the `pubkey` in a config file with the signer identity.
+ *
+ * No-op when the config already names the same key, so a repository that commits
+ * its npub is left alone. Does nothing for a bunker credential, where the
+ * identity is only known after connecting.
+ */
+export async function syncConfigPubkey(path: string, pubkey: string | undefined): Promise<boolean> {
+  if (!pubkey) return false;
+  const original = await readFile(path, "utf8");
+
+  // A placeholder or absent pubkey is exactly what this is meant to repair, so
+  // parse leniently rather than letting the strict loader throw first.
+  let current: string | undefined;
+  try {
+    current = parseConfig(original, path).pubkey;
+  } catch (error) {
+    if (!(error instanceof ConfigError) || !/pubkey/.test(error.message)) throw error;
+    current = undefined;
+  }
+
+  if (current === pubkey) return false;
+  await writeFile(path, injectPubkey(original, pubkey));
+  return true;
 }
 
 /** Reads and parses a config file. */

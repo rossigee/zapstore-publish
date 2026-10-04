@@ -9,7 +9,7 @@
 import { appendFileSync } from "node:fs";
 import crypto from "node:crypto";
 import { setSecret } from "./secrets.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, npubFor, syncConfigPubkey } from "./config.ts";
 import { createLocalSigner, decodeSecretKey, isBunkerUrl, parseBunkerUrl } from "./nostr/signer.ts";
 import { createBunkerSigner } from "./nostr/bunker.ts";
 import { PublishError, publishRelease } from "./publish.ts";
@@ -83,6 +83,15 @@ async function main(): Promise<void> {
     .map((relay) => relay.trim())
     .filter(Boolean);
   if (relays.length === 0) throw new PublishError("no relays configured");
+
+  // Inject the signer's npub into the config when it is missing or stale, so the
+  // committed pubkey cannot drift away from the key the relay will verify. A
+  // bunker credential has no knowable identity until after connecting, so it is
+  // left alone and the config must carry its own pubkey.
+  if (needsSigner) {
+    const injected = await syncConfigPubkey(configPath, npubFor(signWith));
+    if (injected) log(`injected the signer's npub into ${configPath}`);
+  }
 
   const config = await loadConfig(configPath);
   log(`loaded ${configPath} for ${config.repository}`);

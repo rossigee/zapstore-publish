@@ -36,6 +36,11 @@ APK Signing Block. No `aapt`, `apkanalyzer` or `apksigner` is invoked.
    your repository, verifies that `pubkey` matches the signing key, and only then
    whitelists you. Without it the event is rejected.
 
+   `pubkey` is injected at publish time from the signing credential, so it can be
+   left as a placeholder or omitted entirely. That keeps the committed config and
+   the key from drifting apart when the key is rotated, and means the npub never
+   has to be copied by hand.
+
    ```yaml
    repository: https://github.com/you/your-app
    name: Your App
@@ -50,8 +55,12 @@ APK Signing Block. No `aapt`, `apkanalyzer` or `apksigner` is invoked.
    images:
      - screenshots/01.png
    release_notes: ./CHANGELOG.md
-   pubkey: npub1...
+   # Optional. Injected from the signing key at publish time.
+   pubkey: REPLACE_WITH_YOUR_NPUB
    ```
+
+   With a bunker credential there is no known identity until after connecting, so
+   the config must carry its own `pubkey`.
 
 2. **Generate a Nostr identity.** `zsp` has no keygen subcommand, so use
    [`nak`](https://github.com/fiatjaf/nak):
