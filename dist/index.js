@@ -16210,6 +16210,42 @@ function contentTypeForPath(path) {
   return types[extension] ?? "application/octet-stream";
 }
 
+// src/unhandled.ts
+var BENIGN_MESSAGES = ["relay connection closed by us"];
+var TEARDOWN_MESSAGES = ["SendingOnClosedConnection", "closed connection"];
+function messageOf(reason) {
+  return reason instanceof Error ? reason.message : String(reason);
+}
+function isBenignRelayClose(reason) {
+  return reason instanceof Error && BENIGN_MESSAGES.some((m) => reason.message.includes(m));
+}
+function isTeardownNoise(reason) {
+  return reason instanceof Error && TEARDOWN_MESSAGES.some((m) => reason.message.includes(m));
+}
+var tearingDown = false;
+function beginTeardown() {
+  tearingDown = true;
+}
+function createUnhandledRejectionHandler(log2, write, fail) {
+  return (reason) => {
+    const message = messageOf(reason);
+    if (isBenignRelayClose(reason) || tearingDown && isTeardownNoise(reason)) {
+      log2(`ignored relay teardown noise: ${message}`);
+      return;
+    }
+    write(`::error::unhandled rejection: ${reason instanceof Error ? reason.stack : message}
+`);
+    fail();
+  };
+}
+function installUnhandledRejectionGuard(log2, write) {
+  const listener = createUnhandledRejectionHandler(log2, write, () => {
+    process.exitCode = 1;
+  });
+  process.on("unhandledRejection", listener);
+  return () => process.off("unhandledRejection", listener);
+}
+
 // src/nostr/events.ts
 var KIND_SOFTWARE_ASSET = 3063;
 var KIND_SOFTWARE_RELEASE = 30063;
@@ -16621,31 +16657,11 @@ async function publishRelease(options) {
     const appEvent = await sign(appEventTemplate(iconUrl, imageUrls));
     return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {
-    if (!signOnly) pool.close(options.relays);
-  }
-}
-
-// src/unhandled.ts
-function isBenignRelayClose(reason) {
-  return reason instanceof Error && reason.message === "relay connection closed by us";
-}
-function createUnhandledRejectionHandler(log2, write, fail) {
-  return (reason) => {
-    if (isBenignRelayClose(reason)) {
-      log2("relay closed after publishing; nothing left to do");
-      return;
+    if (!signOnly) {
+      beginTeardown();
+      pool.close(options.relays);
     }
-    write(`::error::unhandled rejection: ${reason instanceof Error ? reason.stack : String(reason)}
-`);
-    fail();
-  };
-}
-function installUnhandledRejectionGuard(log2, write) {
-  const listener = createUnhandledRejectionHandler(log2, write, () => {
-    process.exitCode = 1;
-  });
-  process.on("unhandledRejection", listener);
-  return () => process.off("unhandledRejection", listener);
+  }
 }
 
 // src/main.ts
