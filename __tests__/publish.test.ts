@@ -133,9 +133,39 @@ describe("publishRelease in check mode", () => {
     const config = await loadConfig(configPath);
     const signer = createLocalSigner(new Uint8Array(32).fill(3));
 
+    // Publish mode, but the mismatch is caught before any upload or signing,
+    // so this still touches no network.
     await assert.rejects(
-      () => publishRelease({ config, signer, apk, relays: ["wss://relay.zapstore.dev"], check: true }),
+      () => publishRelease({ config, signer, apk, relays: ["wss://relay.zapstore.dev"] }),
       /pubkey does not match the signing key/,
+    );
+  });
+
+  test("needs no signer at all in check mode", async () => {
+    const { apk, configPath } = scaffold();
+    const config = await loadConfig(configPath);
+
+    // No signer: check mode resolves and validates without a credential, so a
+    // repository can verify its listing before it has a Nostr identity.
+    const result = await publishRelease({
+      config,
+      apk,
+      relays: ["wss://relay.zapstore.dev"],
+      check: true,
+    });
+
+    assert.equal(result.published, false);
+    assert.equal(result.packageId, "org.golder.sms2webhook");
+    assert.equal(result.certificateSha256, "2ac43b8bdfac5ac81978146cc57d593307a8315cda2c8073eb148e5287f76c6e");
+  });
+
+  test("refuses to publish with no signer", async () => {
+    const { apk, configPath } = scaffold();
+    const config = await loadConfig(configPath);
+
+    await assert.rejects(
+      () => publishRelease({ config, apk, relays: ["wss://relay.zapstore.dev"] }),
+      /signer is required to publish/,
     );
   });
 

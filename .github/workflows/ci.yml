@@ -77,7 +77,7 @@ jobs:
       # directly, so the runner's Node has to erase type annotations on load.
       # ubuntu-latest ships Node 22 by default, so this asserts that
       # `runs.using: node24` really does hand the action Node 24 and that an
-      # unbuilt checkout is executable.
+      # unbuilt checkout is executable. The step logs its Node version.
       - name: Prepare a fixture APK and listing
         run: |
           mkdir -p .selftest
@@ -90,10 +90,9 @@ jobs:
           license: MIT
           YAML
 
-      - name: Generate a throwaway key
-        id: key
-        run: echo "value=nsec1$(node -e 'process.stdout.write(require("nostr-tools").generateSecretKey())')" >> "$GITHUB_OUTPUT"
-
+      # No sign-with, deliberately: check mode must validate a listing with no
+      # Nostr identity at all, so CI needs no credential and the repository
+      # never handles a key.
       - name: Invoke the action
         id: zapstore
         uses: ./
@@ -101,7 +100,6 @@ jobs:
           config: .selftest/zapstore.yaml
           apk: .selftest/app.apk
           mode: check
-          sign-with: ${{ steps.key.outputs.value }}
 
       - name: Assert the APK was read and the certificate matches apksigner
         run: |

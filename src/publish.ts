@@ -62,7 +62,12 @@ export function inspectApk(apk: Buffer): ApkIdentity {
 
 export interface PublishOptions {
   config: ListingConfig;
-  signer: Signer;
+  /**
+   * Required to publish. Omitted in check mode, which resolves and validates the
+   * APK without any credential, so a repository can validate its listing config
+   * before it has a Nostr identity.
+   */
+  signer?: Signer;
   /** Explicit APK path or URL, overriding the config and the release lookup. */
   apk?: string;
   relays: string[];
@@ -131,9 +136,14 @@ export async function publishRelease(options: PublishOptions): Promise<Published
   );
   log(`platforms: ${platforms.join(", ")}`);
 
-  // A mismatch here means the relay will not whitelist the publisher, and every
-  // event would be rejected, so fail before signing anything.
-  if (config.pubkey && pubkeyToHex(config.pubkey) !== options.signer.publicKey) {
+  if (options.check) {
+    if (config.pubkey) log(`config pubkey ${pubkeyToHex(config.pubkey).slice(0, 16)}… (not cross-checked in check mode)`);
+    else log("config has no pubkey; the relay will not whitelist this publisher until one is set");
+  } else if (!options.signer) {
+    throw new PublishError("a signer is required to publish");
+  } else if (config.pubkey && pubkeyToHex(config.pubkey) !== options.signer.publicKey) {
+    // A mismatch here means the relay will not whitelist the publisher and every
+    // event would be rejected, so fail before signing anything.
     throw new PublishError(
       "zapstore.yaml pubkey does not match the signing key " +
         `(config ${pubkeyToHex(config.pubkey).slice(0, 16)}…, signer ${options.signer.publicKey.slice(0, 16)}…). ` +
@@ -193,8 +203,12 @@ export async function publishRelease(options: PublishOptions): Promise<Published
 
   const pool = new SimplePool();
   try {
+    // Narrowed by the guard above: check mode has already returned.
+    const signer = options.signer;
+    if (!signer) throw new PublishError("a signer is required to publish");
+
     const sign = async (template: EventTemplate): Promise<VerifiedEvent> => {
-      const signed = await options.signer.signEvent(template);
+      const signed = await signer.signEvent(template);
       await pool.publish(options.relays, signed);
       log(`published kind ${template.kind} ${signed.id.slice(0, 16)}…`);
       return signed;

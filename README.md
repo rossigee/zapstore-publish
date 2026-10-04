@@ -96,7 +96,7 @@ supporting per-connection `perms` so the session can be limited to `sign_event`.
 | `apk` | newest matching release asset | Path or https URL to publish instead |
 | `relays` | `wss://relay.zapstore.dev` | Comma-separated relays |
 | `blossom` | `https://cdn.zapstore.dev` | CDN for icon and screenshot uploads |
-| `mode` | `publish` | `check` validates without publishing |
+| `mode` | `publish` | `check` validates without publishing, and needs no credential |
 | `skip-if-unconfigured` | `false` | Succeed quietly when no signer is set |
 
 ## Outputs
@@ -107,15 +107,18 @@ supporting per-connection `perms` so the session can be limited to `sign_event`.
 ## Verifying without publishing
 
 `mode: check` resolves the APK, reads its identity and validates the config, then
-stops. It makes no network calls for a GitHub-sourced APK and uploads nothing, so
-it is safe to run on every push:
+stops. It makes no network calls for a GitHub-sourced APK, uploads nothing, and
+**requires no Nostr identity at all**, so it is safe to run on every push and in
+CI without handling a credential:
 
 ```yaml
 - uses: rossigee/zapstore-publish@v1
   with:
-    sign-with: ${{ secrets.ZAPSTORE_SIGN_WITH }}
     mode: check
 ```
+
+This is how the project's own CI exercises the action: from an unbuilt checkout,
+with no key, asserting the APK digest and certificate fingerprint it reports.
 
 ## How this is tested
 

@@ -59,7 +59,12 @@ async function main(): Promise<void> {
 
   const signWith = input("sign-with") || process.env.SIGN_WITH?.trim() || "";
 
-  if (!signWith) {
+  // Check mode resolves and validates the APK without signing anything, so it
+  // needs no credential. Requiring one would mean a repository cannot validate
+  // its listing config until it has a Nostr identity.
+  const needsSigner = mode !== "check";
+
+  if (needsSigner && !signWith) {
     const notice =
       "Zapstore publish skipped: no Nostr identity configured. Set the ZAPSTORE_SIGN_WITH secret " +
       "to an nsec1... key or a bunker:// URL.";
@@ -71,7 +76,7 @@ async function main(): Promise<void> {
   }
 
   // Keep the credential out of workflow logs.
-  if (!isBunkerUrl(signWith)) setSecret(signWith);
+  if (signWith && !isBunkerUrl(signWith)) setSecret(signWith);
 
   const relays = (input("relays") || "wss://relay.zapstore.dev")
     .split(",")
@@ -82,14 +87,17 @@ async function main(): Promise<void> {
   const config = await loadConfig(configPath);
   log(`loaded ${configPath} for ${config.repository}`);
 
-  const signer = isBunkerUrl(signWith)
-    ? await createBunkerSigner(parseBunkerUrl(signWith), {
-        clientName: "zapstore-publish",
-        clientUrl: "https://github.com/rossigee/zapstore-publish",
-      })
-    : createLocalSigner(decodeSecretKey(signWith));
+  const signer = !signWith
+    ? undefined
+    : isBunkerUrl(signWith)
+      ? await createBunkerSigner(parseBunkerUrl(signWith), {
+          clientName: "zapstore-publish",
+          clientUrl: "https://github.com/rossigee/zapstore-publish",
+        })
+      : createLocalSigner(decodeSecretKey(signWith));
 
-  log(`signing as ${signer.publicKey.slice(0, 16)}… via a ${signer.kind} key`);
+  if (signer) log(`signing as ${signer.publicKey.slice(0, 16)}… via a ${signer.kind} key`);
+  else log("check mode: no Nostr identity needed, nothing will be signed");
 
   try {
     const result = await publishRelease({
@@ -124,7 +132,7 @@ async function main(): Promise<void> {
       ...result.permissions.map((permission) => `  - \`${permission}\``),
     ]);
   } finally {
-    await signer.close();
+    await signer?.close();
   }
 }
 
