@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { extractReleaseNotes, loadConfig, parseConfig, ConfigError } from "../src/config.ts";
 import { inspectApk, publishRelease } from "../src/publish.ts";
 import { createLocalSigner } from "../src/nostr/signer.ts";
-import { nip19 } from "nostr-tools";
+import { getPublicKey, nip19 } from "nostr-tools";
 import { loadApk } from "./helpers.ts";
 
 const APK_PATH = join(import.meta.dirname, "fixtures", "sms2webhook-debug.apk.gz");
@@ -185,6 +185,58 @@ describe("publishRelease in check mode", () => {
           check: true,
         }),
       /does not exist/,
+    );
+  });
+});
+
+describe("publishRelease in sign mode", () => {
+  test("signs every event but publishes nothing and uploads nothing", async () => {
+    // Absolute, because the action resolves media relative to the process
+    // working directory rather than the config file.
+    const icon = join(mkdtempSync(join(tmpdir(), "zapstore-icon-")), "icon.png");
+    writeFileSync(icon, Buffer.from("fake png"));
+    const { apk, configPath } = scaffold({ icon });
+    const config = await loadConfig(configPath);
+    const signer = createLocalSigner(new Uint8Array(32).fill(9));
+
+    const messages: string[] = [];
+    // No relays and no Blossom URL: if this mode tried to reach either, it
+    // would fail, which is exactly the guarantee being asserted.
+    const result = await publishRelease({
+      config,
+      signer,
+      apk,
+      relays: [],
+      signOnly: true,
+      log: (message) => messages.push(message),
+    });
+
+    assert.equal(result.published, false);
+    assert.ok(result.assetEvent, "asset should be signed");
+    assert.ok(result.releaseEvent, "release should be signed");
+    assert.ok(result.appEvent, "app should be signed");
+
+    // Signed by the given key, and the ids are distinct per kind.
+    for (const event of [result.appEvent, result.assetEvent, result.releaseEvent]) {
+      assert.equal(event?.pubkey, getPublicKey(new Uint8Array(32).fill(9)));
+      assert.match(event?.id ?? "", /^[0-9a-f]{64}$/);
+    }
+    assert.notEqual(result.assetEvent?.id, result.releaseEvent?.id);
+
+    // Nothing reached a relay or a CDN. "not published" only ever appears on the
+    // signing lines, so any bare "published kind" line would mean a real relay
+    // write happened.
+    assert.equal(messages.filter((m) => /^published kind/.test(m)).length, 0);
+    assert.equal(messages.filter((m) => /not published/.test(m)).length, 3);
+    assert.equal(messages.filter((m) => /^uploaded /.test(m)).length, 0);
+  });
+
+  test("needs a signer", async () => {
+    const { apk, configPath } = scaffold();
+    const config = await loadConfig(configPath);
+    await assert.rejects(
+      () => publishRelease({ config, apk, relays: [], signOnly: true }),
+      /signer is required to sign/,
     );
   });
 });

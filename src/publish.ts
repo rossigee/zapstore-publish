@@ -75,6 +75,14 @@ export interface PublishOptions {
   channel?: string;
   /** Resolve and validate everything, then stop without publishing. */
   check?: boolean;
+  /**
+   * Build and sign every event but publish nothing.
+   *
+   * Proves the whole credential path end to end, including that the key is
+   * accepted and the signatures verify, without writing to a shared relay. Used
+   * to validate a secret before trusting it with a real publish.
+   */
+  signOnly?: boolean;
   githubToken?: string;
   log?: (message: string) => void;
 }
@@ -140,7 +148,7 @@ export async function publishRelease(options: PublishOptions): Promise<Published
     if (config.pubkey) log(`config pubkey ${pubkeyToHex(config.pubkey).slice(0, 16)}… (not cross-checked in check mode)`);
     else log("config has no pubkey; the relay will not whitelist this publisher until one is set");
   } else if (!options.signer) {
-    throw new PublishError("a signer is required to publish");
+    throw new PublishError(options.signOnly ? "a signer is required to sign" : "a signer is required to publish");
   } else if (config.pubkey && pubkeyToHex(config.pubkey) !== options.signer.publicKey) {
     // A mismatch here means the relay will not whitelist the publisher and every
     // event would be rejected, so fail before signing anything.
@@ -192,14 +200,23 @@ export async function publishRelease(options: PublishOptions): Promise<Published
     return base;
   }
 
-  if (!apk.url && !blossomUrl) {
-    throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
+  const signOnly = options.signOnly === true;
+
+  // In sign mode nothing is uploaded: those writes go to a shared CDN, which is
+  // what this mode exists to avoid. The URLs are still populated so the signed
+  // events have the shape they will have once published.
+  const apkUrl = signOnly
+    ? (apk.url ?? apkSha256)
+    : apk.url ?? (await upload(apk.origin));
+  const iconUrl = signOnly ? config.icon : config.icon ? await upload(config.icon) : undefined;
+  const imageUrls: string[] = [];
+  for (const image of config.images ?? []) {
+    imageUrls.push(signOnly ? image : await upload(image));
   }
 
-  const apkUrl = apk.url ?? (await upload(apk.origin));
-  const iconUrl = config.icon ? await upload(config.icon) : undefined;
-  const imageUrls: string[] = [];
-  for (const image of config.images ?? []) imageUrls.push(await upload(image));
+  if (!signOnly && !apk.url && !blossomUrl) {
+    throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
+  }
 
   const pool = new SimplePool();
   try {
@@ -209,8 +226,12 @@ export async function publishRelease(options: PublishOptions): Promise<Published
 
     const sign = async (template: EventTemplate): Promise<VerifiedEvent> => {
       const signed = await signer.signEvent(template);
-      await pool.publish(options.relays, signed);
-      log(`published kind ${template.kind} ${signed.id.slice(0, 16)}…`);
+      if (signOnly) {
+        log(`signed kind ${template.kind} ${signed.id.slice(0, 16)}… (not published)`);
+      } else {
+        await pool.publish(options.relays, signed);
+        log(`published kind ${template.kind} ${signed.id.slice(0, 16)}…`);
+      }
       return signed;
     };
 
@@ -263,8 +284,9 @@ export async function publishRelease(options: PublishOptions): Promise<Published
       }),
     );
 
-    return { ...base, appEvent, assetEvent, releaseEvent, published: true };
+    return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {
-    pool.close(options.relays);
+    // Only touches connections when a pool was actually used.
+    if (!signOnly) pool.close(options.relays);
   }
 }

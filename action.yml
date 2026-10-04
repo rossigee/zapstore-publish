@@ -41,6 +41,8 @@ inputs:
     description: >-
       publish  resolve the APK, upload media and publish the release events
       check    resolve and validate everything, then stop without publishing
+      sign     build and sign every event but publish nothing, for verifying a
+               signing credential before trusting it with a real publish
     required: false
     default: publish
 

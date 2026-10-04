@@ -105,7 +105,7 @@ supporting per-connection `perms` so the session can be limited to `sign_event`.
 | `apk` | newest matching release asset | Path or https URL to publish instead |
 | `relays` | `wss://relay.zapstore.dev` | Comma-separated relays |
 | `blossom` | `https://cdn.zapstore.dev` | CDN for icon and screenshot uploads |
-| `mode` | `publish` | `check` validates without publishing, and needs no credential |
+| `mode` | `publish` | `check` needs no credential; `sign` signs without publishing |
 | `skip-if-unconfigured` | `false` | Succeed quietly when no signer is set |
 
 ## Outputs
@@ -128,6 +128,23 @@ CI without handling a credential:
 
 This is how the project's own CI exercises the action: from an unbuilt checkout,
 with no key, asserting the APK digest and certificate fingerprint it reports.
+
+### Verifying a signing credential
+
+`mode: sign` needs a credential and signs every event, but uploads no media and
+publishes nothing. It proves the whole path — secret reaches the runner, is
+accepted, and produces signatures that verify — without writing to a shared relay
+or CDN. Useful for confirming a secret is correct before letting it publish:
+
+```yaml
+- uses: rossigee/zapstore-publish@v1
+  with:
+    sign-with: ${{ secrets.ZAPSTORE_SIGN_WITH }}
+    mode: sign
+```
+
+`check`, `sign` and `publish` are the three stages: validate, prove the key, then
+publish.
 
 ## How this is tested
 

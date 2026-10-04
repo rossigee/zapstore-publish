@@ -62,6 +62,7 @@ async function main(): Promise<void> {
   // Check mode resolves and validates the APK without signing anything, so it
   // needs no credential. Requiring one would mean a repository cannot validate
   // its listing config until it has a Nostr identity.
+  // Both publish and sign need a credential; check does not.
   const needsSigner = mode !== "check";
 
   if (needsSigner && !signWith) {
@@ -105,8 +106,12 @@ async function main(): Promise<void> {
         })
       : createLocalSigner(decodeSecretKey(signWith));
 
-  if (signer) log(`signing as ${signer.publicKey.slice(0, 16)}… via a ${signer.kind} key`);
-  else log("check mode: no Nostr identity needed, nothing will be signed");
+  if (signer) {
+    log(`signing as ${signer.publicKey.slice(0, 16)}… via a ${signer.kind} key`);
+    if (mode === "sign") log("sign mode: events will be signed but not published");
+  } else {
+    log("check mode: no Nostr identity needed, nothing will be signed");
+  }
 
   try {
     const result = await publishRelease({
@@ -116,6 +121,7 @@ async function main(): Promise<void> {
       relays,
       blossomUrl: input("blossom") || undefined,
       check: mode === "check",
+      signOnly: mode === "sign",
       githubToken: process.env.GITHUB_TOKEN,
       log,
     });
