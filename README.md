@@ -109,7 +109,14 @@ supporting per-connection `perms` so the session can be limited to `sign_event`.
 | `sign-with` | `$SIGN_WITH` | `nsec1...`, hex, or a `bunker://` URL |
 | `apk` | newest matching release asset | Path or https URL to publish instead |
 | `relays` | `wss://relay.zapstore.dev` | Comma-separated relays |
-| `blossom` | `https://cdn.zapstore.dev` | CDN for icon and screenshot uploads |
+| `blossom` | `https://cdn.zapstore.dev` | Blossom CDN for the APK, icon and screenshots |
+
+Uploads are authorised per BUD-02 with a kind-24242 event signed by the publishing
+identity and sent as `Authorization: Nostr <base64>`. The event carries a `t` tag
+naming the action (`upload`), an `x` tag with the blob's SHA-256, and an
+`expiration`. The hash is sent as hex under both `Content-Digest` and `X-SHA-256`,
+because the Blossom server `cdn.zapstore.dev` runs reads the former and later
+versions read the latter.
 | `mode` | `publish` | `check` needs no credential; `sign` signs without publishing |
 | `skip-if-unconfigured` | `false` | Succeed quietly when no signer is set |
 
