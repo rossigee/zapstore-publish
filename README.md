@@ -152,10 +152,11 @@ publish.
 checked against something independent.
 
 - **Certificate fingerprints are compared to `apksigner`.** The test fixture is a
-  real `assembleDebug` output, and the expected digest was captured from the
-  Android SDK, not from this code.
-- **Manifest values are compared to `build.gradle`** — `applicationId`,
-  `versionCode`, `versionName`, `minSdk`, `targetSdk`.
+  real SDK build — `aapt2` links its manifest, `d8` produces its dex, `zipalign`
+  aligns and `apksigner` signs it with v2 only — so the expected digest was
+  captured from the Android SDK, not from this code.
+- **Manifest values are compared to the fixture's own `AndroidManifest.xml`** —
+  `package`, `versionCode`, `versionName`, `minSdk`, `targetSdk`.
 - **NIP-46 runs against an in-process signer** that derives real NIP-44
   conversation keys, decrypts requests and encrypts replies. This caught a bug
   where a second, separately derived key was used for inbound traffic, which made

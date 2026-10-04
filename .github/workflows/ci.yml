@@ -81,10 +81,10 @@ jobs:
       - name: Prepare a fixture APK and listing
         run: |
           mkdir -p .selftest
-          gunzip -c __tests__/fixtures/sms2webhook-debug.apk.gz > .selftest/app.apk
+          gunzip -c __tests__/fixtures/minimal-debug.apk.gz > .selftest/app.apk
           cat > .selftest/zapstore.yaml <<'YAML'
-          repository: https://github.com/rossigee/sms2webhook
-          name: SMS2Webhook
+          repository: https://github.com/example/example-app
+          name: Example App
           summary: Self test
           description: Self test listing.
           license: MIT
@@ -103,6 +103,6 @@ jobs:
 
       - name: Assert the APK was read and the certificate matches apksigner
         run: |
-          test "${{ steps.zapstore.outputs.apk-sha256 }}" = "2bddad2c3b9cb0cb3977c1b03a20bb43fc38a6bf28ff39778ae7db4f7528844c"
-          test "${{ steps.zapstore.outputs.certificate-sha256 }}" = "2ac43b8bdfac5ac81978146cc57d593307a8315cda2c8073eb148e5287f76c6e"
+          test "${{ steps.zapstore.outputs.apk-sha256 }}" = "28b9bd19e5e235b20e85755fbe806162d1da42ab0fb538cbc7e77d7d27166168"
+          test "${{ steps.zapstore.outputs.certificate-sha256 }}" = "925d2fefa4c7ab702ad35df1cf35ba7976faa7f2b2e0dd76d9b35d0859fe5bf9"
           echo "APK sha256 and certificate fingerprint both match the expected values"

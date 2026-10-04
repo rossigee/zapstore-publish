@@ -116,23 +116,23 @@ describe("blossom", () => {
 
 describe("github source resolution", () => {
   test("parses a repository URL, with or without .git", () => {
-    assert.deepEqual(parseGitHubRepository("https://github.com/rossigee/sms2webhook"), {
-      owner: "rossigee",
-      repo: "sms2webhook",
+    assert.deepEqual(parseGitHubRepository("https://github.com/example/example-app"), {
+      owner: "example",
+      repo: "example-app",
     });
-    assert.deepEqual(parseGitHubRepository("https://github.com/rossigee/sms2webhook.git"), {
-      owner: "rossigee",
-      repo: "sms2webhook",
+    assert.deepEqual(parseGitHubRepository("https://github.com/example/example-app.git"), {
+      owner: "example",
+      repo: "example-app",
     });
     assert.throws(() => parseGitHubRepository("https://gitlab.com/a/b"), SourceError);
   });
 
   test("prefers the release-signed build over the debug build", () => {
     const ranked = rankApkAssets([
-      { name: "sms2webhook-v2.0.1-debug.apk", size: 18_398_889 },
-      { name: "sms2webhook-v2.0.1-release-signed.apk", size: 12_000_000 },
+      { name: "example-app-v2.0.1-debug.apk", size: 18_398_889 },
+      { name: "example-app-v2.0.1-release-signed.apk", size: 12_000_000 },
     ]);
-    assert.equal(ranked[0]?.name, "sms2webhook-v2.0.1-release-signed.apk");
+    assert.equal(ranked[0]?.name, "example-app-v2.0.1-release-signed.apk");
   });
 
   test("prefers a universal build over a per-ABI one", () => {
@@ -153,7 +153,7 @@ describe("github source resolution", () => {
         { name: "app-release-signed.apk", size: 10_000_000 },
       ],
     };
-    // The sms2webhook pin, which is what keeps a debug build off users' devices.
+    // An explicit pin is what keeps a debug build off users' devices.
     assert.equal(selectApkAsset(release, ".*-release-signed\\.apk$").name, "app-release-signed.apk");
     assert.throws(() => selectApkAsset(release, ".*-nope\\.apk$"), /no asset in v2.0.1 matched/);
   });

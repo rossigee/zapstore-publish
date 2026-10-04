@@ -10,17 +10,15 @@ import { createLocalSigner } from "../src/nostr/signer.ts";
 import { getPublicKey, nip19 } from "nostr-tools";
 import { loadApk } from "./helpers.ts";
 
-const APK_PATH = join(import.meta.dirname, "fixtures", "sms2webhook-debug.apk.gz");
-
 /** Writes a listing config into a temp dir alongside a local APK copy. */
 function scaffold(overrides: Record<string, unknown> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "zapstore-"));
-  const apk = join(dir, "sms2webhook.apk");
+  const apk = join(dir, "app.apk");
   writeFileSync(apk, loadApk());
   const configPath = join(dir, "zapstore.yaml");
   writeFileSync(
     configPath,
-    `repository: https://github.com/rossigee/sms2webhook\nname: SMS2Webhook\ndescription: Forwards SMS.\nsummary: SMS to webhook\nlicense: MIT\ntags:\n  - sms\n${Object.entries(overrides)
+    `repository: https://github.com/example/example-app\nname: Example App\ndescription: An example listing.\nsummary: Example listing\nlicense: MIT\ntags:\n  - example\n${Object.entries(overrides)
       .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
       .join("\n")}\n`,
   );
@@ -85,13 +83,13 @@ describe("extractReleaseNotes", () => {
 });
 
 describe("inspectApk", () => {
-  test("reads identity, certificate and platforms from the real APK", () => {
+  test("reads identity, certificate and platforms from the fixture APK", () => {
     const identity = inspectApk(loadApk());
-    assert.equal(identity.manifest.package, "org.golder.sms2webhook");
+    assert.equal(identity.manifest.package, "org.example.apkfixture");
     assert.equal(identity.manifest.versionName, "2.0.1");
-    assert.equal(identity.certificateSha256, "2ac43b8bdfac5ac81978146cc57d593307a8315cda2c8073eb148e5287f76c6e");
+    assert.equal(identity.certificateSha256, "925d2fefa4c7ab702ad35df1cf35ba7976faa7f2b2e0dd76d9b35d0859fe5bf9");
     assert.equal(identity.certificateScheme, "v2");
-    // Pure Java APK, so it claims every ABI rather than just arm64.
+    // The fixture ships no native libraries, so it claims every ABI.
     assert.deepEqual(identity.platforms, [
       "android-arm64-v8a",
       "android-armeabi-v7a",
@@ -118,12 +116,12 @@ describe("publishRelease in check mode", () => {
     });
 
     assert.equal(result.published, false);
-    assert.equal(result.packageId, "org.golder.sms2webhook");
+    assert.equal(result.packageId, "org.example.apkfixture");
     assert.equal(result.version, "2.0.1");
     assert.equal(result.versionCode, 3);
     assert.equal(result.apkSha256.length, 64);
-    assert.equal(result.certificateSha256, "2ac43b8bdfac5ac81978146cc57d593307a8315cda2c8073eb148e5287f76c6e");
-    assert.ok(result.permissions.includes("android.permission.READ_SMS"));
+    assert.equal(result.certificateSha256, "925d2fefa4c7ab702ad35df1cf35ba7976faa7f2b2e0dd76d9b35d0859fe5bf9");
+    assert.ok(result.permissions.includes("android.permission.CAMERA"));
     assert.ok(messages.some((m) => m.includes("check mode")));
     assert.ok(messages.some((m) => m.includes("android-arm64-v8a")));
   });
@@ -155,8 +153,8 @@ describe("publishRelease in check mode", () => {
     });
 
     assert.equal(result.published, false);
-    assert.equal(result.packageId, "org.golder.sms2webhook");
-    assert.equal(result.certificateSha256, "2ac43b8bdfac5ac81978146cc57d593307a8315cda2c8073eb148e5287f76c6e");
+    assert.equal(result.packageId, "org.example.apkfixture");
+    assert.equal(result.certificateSha256, "925d2fefa4c7ab702ad35df1cf35ba7976faa7f2b2e0dd76d9b35d0859fe5bf9");
   });
 
   test("refuses to publish with no signer", async () => {

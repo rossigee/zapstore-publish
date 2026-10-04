@@ -12,13 +12,17 @@ import { loadApk } from "./helpers.ts";
 /**
  * Ground truth captured from the Android SDK build tools, not from this parser:
  *
- *   apksigner verify --verbose --print-certs sms2webhook-debug.apk
+ *   apksigner verify --verbose --print-certs minimal-debug.apk
  *     Verified using v2 scheme (APK Signature Scheme v2): true
  *     Verified using v3 scheme (APK Signature Scheme v3): false
- *     Signer #1 certificate SHA-256 digest: 2ac43b8b...
+ *     Signer #1 certificate DN: CN=Android Debug, O=Android, C=US
+ *     Signer #1 certificate SHA-256 digest: 925d2fef...
+ *
+ * The certificate is a 791-byte DER encoding, which `openssl x509 -outform der`
+ * confirms independently of both this parser and apksigner.
  */
 const EXPECTED_CERT_SHA256 =
-  "2ac43b8bdfac5ac81978146cc57d593307a8315cda2c8073eb148e5287f76c6e";
+  "925d2fefa4c7ab702ad35df1cf35ba7976faa7f2b2e0dd76d9b35d0859fe5bf9";
 
 describe("APK signing block", () => {
   test("certificate fingerprint matches apksigner", () => {
@@ -27,7 +31,7 @@ describe("APK signing block", () => {
 
     assert.equal(info.sha256, EXPECTED_CERT_SHA256);
     assert.equal(info.scheme, "v2");
-    assert.equal(info.derLength, 744);
+    assert.equal(info.derLength, 791);
   });
 
   test("locates the signing block adjacent to the central directory", () => {

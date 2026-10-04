@@ -16,12 +16,12 @@ import {
 } from "../src/nostr/events.ts";
 
 const CREATED_AT = 1_700_000_000;
-const PACKAGE = "org.golder.sms2webhook";
+const PACKAGE = "org.example.apkfixture";
 const PLATFORMS = ["android-arm64-v8a", "android-armeabi-v7a", "android-x86", "android-x86_64"];
 
 describe("platformsForArchitectures", () => {
   test("claims every ABI when the APK has no native libraries", () => {
-    // The sms2webhook APK is pure Java, so it runs everywhere.
+    // An APK with no native libraries runs everywhere.
     assert.deepEqual(platformsForArchitectures([]), [
       "android-arm64-v8a",
       "android-armeabi-v7a",
@@ -52,7 +52,7 @@ describe("software asset event (3063)", () => {
     sha256: "a".repeat(64),
     version: "2.0.1",
     versionCode: 3,
-    urls: ["https://github.com/rossigee/sms2webhook/releases/download/v2.0.1/app.apk"],
+    urls: ["https://github.com/example/example-app/releases/download/v2.0.1/app.apk"],
     size: 12_000_000,
     platforms: PLATFORMS,
     minSdkVersion: 28,
@@ -179,15 +179,15 @@ describe("software release event (30063)", () => {
 describe("software application event (32267)", () => {
   const event = buildSoftwareAppEvent({
     packageId: PACKAGE,
-    name: "SMS2Webhook",
-    description: "Forwards SMS to a webhook.",
-    summary: "Forward SMS to your webhook",
+    name: "Example App",
+    description: "An example listing.",
+    summary: "Example listing",
     icon: "https://cdn.example/icon.png",
     images: ["https://cdn.example/one.png", "https://cdn.example/two.png"],
-    tags: ["sms", "automation"],
-    website: "https://github.com/rossigee/sms2webhook",
-    repository: "https://github.com/rossigee/sms2webhook",
-    nip34: { pointer: "30617:" + "d".repeat(64) + ":sms2webhook" },
+    tags: ["example", "automation"],
+    website: "https://github.com/example/example-app",
+    repository: "https://github.com/example/example-app",
+    nip34: { pointer: "30617:" + "d".repeat(64) + ":example-app" },
     platforms: PLATFORMS,
     license: "MIT",
     createdAt: CREATED_AT,
@@ -196,8 +196,8 @@ describe("software application event (32267)", () => {
   test("is addressed by package id", () => {
     assert.equal(event.kind, KIND_SOFTWARE_APP);
     assert.equal(tagValue(event, "d"), PACKAGE);
-    assert.equal(tagValue(event, "name"), "SMS2Webhook");
-    assert.equal(tagValue(event, "summary"), "Forward SMS to your webhook");
+    assert.equal(tagValue(event, "name"), "Example App");
+    assert.equal(tagValue(event, "summary"), "Example listing");
   });
 
   test("carries icon, images and topics", () => {
@@ -206,13 +206,13 @@ describe("software application event (32267)", () => {
       "https://cdn.example/one.png",
       "https://cdn.example/two.png",
     ]);
-    assert.deepEqual(tagValues(event, "t"), ["sms", "automation"]);
+    assert.deepEqual(tagValues(event, "t"), ["example", "automation"]);
   });
 
   test("links the NIP-34 repository with an a tag", () => {
     assert.deepEqual(
       event.tags.find((tag) => tag[0] === "a"),
-      ["a", "30617:" + "d".repeat(64) + ":sms2webhook"],
+      ["a", "30617:" + "d".repeat(64) + ":example-app"],
     );
   });
 
@@ -234,8 +234,8 @@ describe("software application event (32267)", () => {
   });
 
   test("records website, license and platforms", () => {
-    assert.equal(tagValue(event, "url"), "https://github.com/rossigee/sms2webhook");
-    assert.equal(tagValue(event, "repository"), "https://github.com/rossigee/sms2webhook");
+    assert.equal(tagValue(event, "url"), "https://github.com/example/example-app");
+    assert.equal(tagValue(event, "repository"), "https://github.com/example/example-app");
     assert.equal(tagValue(event, "license"), "MIT");
     assert.deepEqual(tagValues(event, "f"), PLATFORMS);
   });
