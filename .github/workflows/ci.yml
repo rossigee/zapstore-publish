@@ -20,8 +20,7 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
       - name: Typecheck
         run: npm run typecheck
@@ -29,20 +28,19 @@ jobs:
       - name: Test
         run: npm test
 
-  action-metadata:
+  metadata:
     name: Validate action.yml
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # The action runs its TypeScript directly, so a broken main path or a
-      # malformed metadata file would only surface when a consumer tried it.
-      - name: Check the action entry point resolves
-        run: |
-          test -f src/main.ts
-          test -f action.yml
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
 
-      - name: Parse action.yml
+      - run: npm ci
+
+      - name: Check the metadata matches the entry point
         run: |
           node -e '
             const {readFileSync} = require("node:fs");
@@ -53,5 +51,60 @@ jobs:
             for (const field of ["name", "description"]) {
               if (!action[field]) throw new Error(`action.yml is missing ${field}`);
             }
-            console.log("action.yml OK:", Object.keys(action.inputs ?? {}).join(", "));
+            const source = readFileSync("src/main.ts", "utf8");
+            const read = [...source.matchAll(/(?:input|flag)\("([^"]+)"\)/g)].map((m) => m[1]);
+            const undeclared = [...new Set(read)].filter((name) => !(name in (action.inputs ?? {})));
+            if (undeclared.length) {
+              throw new Error(`main.ts reads undeclared inputs: ${undeclared.join(", ")}`);
+            }
+            console.log("action.yml OK");
+            console.log("inputs:", Object.keys(action.inputs).join(", "));
           '
+
+  self-test:
+    name: Run the action on the runner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+
+      - run: npm ci
+
+      # The whole design rests on this: the action runs TypeScript source
+      # directly, so the runner's Node has to erase type annotations on load.
+      # ubuntu-latest ships Node 22 by default, so this asserts that
+      # `runs.using: node24` really does hand the action Node 24 and that an
+      # unbuilt checkout is executable.
+      - name: Prepare a fixture APK and listing
+        run: |
+          mkdir -p .selftest
+          gunzip -c __tests__/fixtures/sms2webhook-debug.apk.gz > .selftest/app.apk
+          cat > .selftest/zapstore.yaml <<'YAML'
+          repository: https://github.com/rossigee/sms2webhook
+          name: SMS2Webhook
+          summary: Self test
+          description: Self test listing.
+          license: MIT
+          YAML
+
+      - name: Generate a throwaway key
+        id: key
+        run: echo "value=nsec1$(node -e 'process.stdout.write(require("nostr-tools").generateSecretKey())')" >> "$GITHUB_OUTPUT"
+
+      - name: Invoke the action
+        id: zapstore
+        uses: ./
+        with:
+          config: .selftest/zapstore.yaml
+          apk: .selftest/app.apk
+          mode: check
+          sign-with: ${{ steps.key.outputs.value }}
+
+      - name: Assert the APK was read and the certificate matches apksigner
+        run: |
+          test "${{ steps.zapstore.outputs.apk-sha256 }}" = "2bddad2c3b9cb0cb3977c1b03a20bb43fc38a6bf28ff39778ae7db4f7528844c"
+          test "${{ steps.zapstore.outputs.certificate-sha256 }}" = "2ac43b8bdfac5ac81978146cc57d593307a8315cda2c8073eb148e5287f76c6e"
+          echo "APK sha256 and certificate fingerprint both match the expected values"

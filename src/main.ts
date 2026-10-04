@@ -49,6 +49,10 @@ function log(message: string): void {
 }
 
 async function main(): Promise<void> {
+  // Logged because the action depends on the runner's Node erasing TypeScript
+  // type annotations at load time, which needs Node 22.18+ or 24+.
+  log(`running on Node ${process.version}`);
+
   const configPath = input("config") || "zapstore.yaml";
   const mode = input("mode") || "publish";
   const skipIfUnconfigured = flag("skip-if-unconfigured");
