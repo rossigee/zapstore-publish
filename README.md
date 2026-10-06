@@ -67,6 +67,21 @@ APK Signing Block. No `aapt`, `apkanalyzer` or `apksigner` is invoked.
    With a bunker credential there is no known identity until after connecting, so
    the config must carry its own `pubkey`.
 
+   **`release_notes` selects one section by version.** It looks for a
+   `## [X.Y.Z]` heading matching the APK's `versionName` and publishes only that
+   section:
+
+   ```markdown
+   ## [2.2.0] - 2026-10-06
+   - New notes for 2.2.0
+   ```
+
+   **If no heading matches, the whole file is published** — every version's notes,
+   headings included. That fallback is deliberate, so a repository whose changelog is
+   not versioned still gets something rather than an empty description, but it is
+   easy not to notice: a release with no matching section looks like it worked. If
+   you point `release_notes` at a file, keep it versioned.
+
 2. **Generate a Nostr identity.** `zsp` has no keygen subcommand, so use
    [`nak`](https://github.com/fiatjaf/nak):
 
