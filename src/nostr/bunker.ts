@@ -14,12 +14,14 @@
  * exercised against an in-process signer, with no relay and no network.
  */
 
+import { createHash } from "node:crypto";
 import {
   SimplePool,
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
   nip44,
+  verifyEvent,
   type EventTemplate,
   type NostrEvent,
   type VerifiedEvent,
@@ -117,6 +119,97 @@ interface DecodedResponse {
   id?: string;
   result?: string;
   error?: string;
+}
+
+/**
+ * NIP-01 requires an event id to be the SHA-256 of its own serialised form, with
+ * exactly these fields, in this order.
+ *
+ * Written out rather than taken from nostr-tools so the check does not inherit
+ * whatever that library's helper happens to do, and so the id a remote signer
+ * reported can be recomputed independently of it.
+ */
+function serializedEvent(event: VerifiedEvent): string {
+  return JSON.stringify([
+    0,
+    event.pubkey,
+    event.created_at,
+    event.kind,
+    event.tags,
+    event.content,
+  ]);
+}
+
+/** SHA-256 of an event's serialised form, which is what its id must be. */
+function getEventHash(serialized: string): string {
+  return createHash("sha256").update(serialized, "utf8").digest("hex");
+}
+
+/** Parses a signer's reply, rejecting anything that is not a signed event. */
+function parseSignedEvent(serialized: string): VerifiedEvent {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serialized);
+  } catch {
+    throw new Error("remote signer returned a response that is not JSON");
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("remote signer returned a response that is not an event object");
+  }
+  const event = parsed as Partial<VerifiedEvent>;
+  if (typeof event.sig !== "string" || !event.sig) {
+    throw new Error("remote signer returned an event without a signature");
+  }
+  if (typeof event.id !== "string" || !event.id) {
+    throw new Error("remote signer returned an event without an id");
+  }
+  if (typeof event.pubkey !== "string" || !/^[0-9a-f]{64}$/.test(event.pubkey)) {
+    throw new Error("remote signer returned an event without a usable pubkey");
+  }
+  if (!Array.isArray(event.tags) || typeof event.content !== "string" || typeof event.created_at !== "number") {
+    throw new Error("remote signer returned an event with a malformed body");
+  }
+  return event as VerifiedEvent;
+}
+
+/**
+ * Asserts a signed event is the event that was asked for.
+ *
+ * The signature can be perfectly valid and still be the wrong event. What is
+ * being prevented is a signer that signs a template, then returns something
+ * else that it also signs: a different package id, a different content hash,
+ * a different APK URL. Those values are what Zapstore shows and what a client
+ * verifies after download, so they cannot be taken on trust from a third party.
+ */
+function assertMatchesTemplate(event: VerifiedEvent, template: EventTemplate): void {
+  if (event.kind !== template.kind) {
+    throw new Error(`remote signer returned a kind ${event.kind} event, asked for kind ${template.kind}`);
+  }
+  if (event.created_at !== template.created_at) {
+    throw new Error(
+      `remote signer returned created_at ${event.created_at}, asked for ${template.created_at}`,
+    );
+  }
+  if (event.content !== template.content) {
+    throw new Error("remote signer altered the event content");
+  }
+  if (!tagsEqual(event.tags, template.tags)) {
+    throw new Error("remote signer altered the event tags");
+  }
+}
+
+/**
+ * Compares two tag lists.
+ *
+ * Tag order is significant to a kind 30063 release, where the `e` tag points at
+ * the asset event, so this is an exact comparison rather than a set comparison.
+ */
+function tagsEqual(a: string[][], b: string[][]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((tag, index) => {
+    const other = b[index];
+    return other !== undefined && tag.length === other.length && tag.every((v, i) => v === other[i]);
+  });
 }
 
 /**
@@ -226,10 +319,32 @@ export async function createBunkerSigner(
     kind: "bunker",
     async signEvent(template: EventTemplate): Promise<VerifiedEvent> {
       const serialized = await request("sign_event", [JSON.stringify(template)]);
-      const signed = JSON.parse(serialized) as VerifiedEvent;
-      if (!signed.sig || !signed.id) {
-        throw new Error("remote signer returned an event without a signature");
+      const signed = parseSignedEvent(serialized);
+
+      // A NIP-46 signer is remote and therefore outside this process's trust
+      // boundary: it is a third-party app reached over a relay. Checking that
+      // `sig` and `id` are present proves only that the JSON has those keys.
+      //
+      // Without these checks a signer could return an event for a *different*
+      // pubkey, or for content that differs from what was asked for, and it
+      // would be published as the publisher's own. An event attributed to
+      // another identity is worse than a failed step: the relay would whitelist
+      // whichever key actually signed.
+      if (signed.pubkey !== publicKey) {
+        throw new Error(
+          `remote signer returned an event for ${signed.pubkey.slice(0, 16)}… but ` +
+            `get_public_key reported ${publicKey.slice(0, 16)}…`,
+        );
       }
+      // NIP-01: the id is the SHA-256 of the serialised event, so this catches a
+      // tampered payload even before the signature itself is checked.
+      if (signed.id !== getEventHash(serializedEvent(signed))) {
+        throw new Error("remote signer returned an event whose id does not match its content");
+      }
+      if (!verifyEvent(signed)) {
+        throw new Error("remote signer returned an event with an invalid signature");
+      }
+      assertMatchesTemplate(signed, template);
       return signed;
     },
     async close(): Promise<void> {
