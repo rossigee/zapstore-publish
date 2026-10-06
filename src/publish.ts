@@ -257,7 +257,7 @@ export async function publishRelease(options: PublishOptions): Promise<Published
       return signed;
     };
 
-    const appEventTemplate = (icon: string | undefined, images: string[]): EventTemplate =>
+    const appEventTemplate = (icon: string | undefined, images: string[], at: number = createdAt): EventTemplate =>
       buildSoftwareAppEvent({
         packageId: manifest.package,
         name: config.name ?? manifest.label ?? manifest.package,
@@ -271,7 +271,7 @@ export async function publishRelease(options: PublishOptions): Promise<Published
         platforms,
         license: config.license,
         communities: config.communities,
-        createdAt,
+        createdAt: at,
       });
 
     // The app event is published before anything is uploaded, and deliberately
@@ -282,9 +282,10 @@ export async function publishRelease(options: PublishOptions): Promise<Published
     // "403 authenticated pubkey is not allowed" with no way to trigger the
     // whitelist that would unblock it.
     //
-    // This first version carries no uploaded media, because none exists yet. It
-    // is a replaceable kind 0 keyed on the package id, so the enriched version
-    // published below replaces it.
+    // This first version carries no uploaded media, because none exists yet.
+    // The enriched version published below must use a strictly later created_at
+    // so that it replaces this bare event on the relay (otherwise the icon and
+    // images never appear).
     await sign(appEventTemplate(undefined, []));
 
     const apkUrl = signOnly
@@ -327,7 +328,10 @@ export async function publishRelease(options: PublishOptions): Promise<Published
       }),
     );
 
-    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls));
+    // Use a fresh timestamp so this replaceable event is strictly newer than
+    // the bare one published above. Same created_at means the relay may keep
+    // the first version and the icon/images never appear in the listing.
+    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls, Math.floor(Date.now() / 1000)));
 
     return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {
