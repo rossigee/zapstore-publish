@@ -1,6 +1,8 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -272,5 +274,135 @@ describe("publishRelease in sign mode", () => {
       () => publishRelease({ config, apk, relays: [], signOnly: true }),
       /signer is required to sign/,
     );
+  });
+});
+
+// Regression: SimplePool.publish is typed and implemented as returning one
+// promise *per relay*, `relays.map(async …)`. `await pool.publish(…)` therefore
+// awaited an array, which resolves immediately, so every event was reported as
+// published before any relay had answered and a rejection floated free as an
+// unhandled rejection. That is the mechanism behind the tolerated teardown
+// rejections in unhandled.ts: the publish they belonged to was never awaited.
+describe("publishRelease awaiting the relay", () => {
+  /**
+   * Serves the fixture APK over loopback.
+   *
+   * A local path would have to be uploaded to Blossom before anything is
+   * published, and that upload is a real network call this test must not make.
+   * An explicit https source is recorded as a durable URL instead of being
+   * copied, so passing one reaches the publishing path with no CDN involved.
+   */
+  async function serveApk(): Promise<{ url: string; close: () => Promise<void> }> {
+    const apk = loadApk();
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/vnd.android.package-archive" });
+      response.end(apk);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    return {
+      url: `http://127.0.0.1:${port}/app.apk`,
+      close: () => new Promise<void>((resolve) => server.close(() => resolve())),
+    };
+  }
+
+  /** A pool that settles its promises, so ordering against the log is observable. */
+  function fakePool(behaviour: "resolve" | "reject") {
+    const kinds: number[] = [];
+    const state = { settled: 0 };
+    return {
+      kinds,
+      state,
+      pool: {
+        publish(relays: string[], event: { kind: number }) {
+          kinds.push(event.kind);
+          return relays.map(() =>
+            Promise.resolve().then(() => {
+              if (behaviour === "reject") throw new Error(`relay refused kind ${event.kind}`);
+              state.settled += 1;
+              return "ok";
+            }),
+          );
+        },
+        close() {},
+      },
+    };
+  }
+
+  async function publishTo(fake: ReturnType<typeof fakePool>, apkUrl: string, relays: string[], log: (m: string) => void) {
+    const { configPath } = scaffold();
+    return publishRelease({
+      config: await loadConfig(configPath),
+      signer: createLocalSigner(new Uint8Array(32).fill(9)),
+      apk: apkUrl,
+      relays,
+      pool: fake.pool,
+      log,
+    });
+  }
+
+  test("does not claim an event was published until a relay has accepted it", async () => {
+    const server = await serveApk();
+    const fake = fakePool("resolve");
+    const messages: string[] = [];
+    let settledWhenClaimed = -1;
+
+    try {
+      await publishTo(fake, server.url, ["wss://relay.example"], (message) => {
+        messages.push(message);
+        if (/^published kind/.test(message)) settledWhenClaimed = fake.state.settled;
+      });
+    } finally {
+      await server.close();
+    }
+
+    // The app event is published twice, once to trigger whitelisting and once
+    // with its media, alongside the other two kinds.
+    const claims = messages.filter((m) => /^published kind/.test(m));
+    assert.equal(claims.length, 4);
+    assert.ok(
+      settledWhenClaimed > 0,
+      "an event was reported published before any relay promise resolved",
+    );
+  });
+
+  test("fails the publish when a relay refuses the event", async () => {
+    const server = await serveApk();
+    const fake = fakePool("reject");
+    const messages: string[] = [];
+
+    try {
+      await assert.rejects(
+        () => publishTo(fake, server.url, ["wss://relay.example"], (message) => messages.push(message)),
+        /relay refused kind/,
+      );
+    } finally {
+      await server.close();
+    }
+
+    assert.ok(fake.kinds.length > 0, "the relay was actually asked to publish");
+    assert.deepEqual(
+      messages.filter((m) => /^published kind/.test(m)),
+      [],
+      "nothing may be reported as published once a relay has refused",
+    );
+  });
+
+  test("awaits every configured relay, not just the first", async () => {
+    const server = await serveApk();
+    const fake = fakePool("resolve");
+
+    try {
+      await publishTo(fake, server.url, [
+        "wss://one.example",
+        "wss://two.example",
+        "wss://three.example",
+      ], () => {});
+    } finally {
+      await server.close();
+    }
+
+    // Four events of three relays is twelve. A partial await settles fewer.
+    assert.equal(fake.state.settled, 12);
   });
 });

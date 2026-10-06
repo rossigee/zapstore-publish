@@ -78,7 +78,7 @@ export const relayTransport: TransportFactory = async (pointer, identity) => {
 
   return {
     async publish(request) {
-      await pool.publish(pointer.relays, finalizeEvent(request, identity.secret));
+      await Promise.all(pool.publish(pointer.relays, finalizeEvent(request, identity.secret)));
     },
     onResponse(next) {
       handler = next;

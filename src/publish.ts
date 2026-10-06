@@ -86,6 +86,25 @@ export interface PublishOptions {
   signOnly?: boolean;
   githubToken?: string;
   log?: (message: string) => void;
+  /**
+   * Overrides the relay pool. Injected rather than constructed inline so the
+   * publishing path can be tested without a live relay, which is where the
+   * behaviour that matters lives: `SimplePool.publish` returns one promise per
+   * relay, and nothing else in this file is worth a network.
+   */
+  pool?: RelayPool;
+}
+
+/**
+ * The subset of nostr-tools' SimplePool that publishing depends on.
+ *
+ * `publish` is declared to return an *array* of promises, one per relay, and
+ * the implementation really does return `relays.map(async …)`. Awaiting that
+ * array directly awaits nothing.
+ */
+export interface RelayPool {
+  publish(relays: string[], event: VerifiedEvent): Promise<unknown>[];
+  close(relays: string[]): void;
 }
 
 export interface PublishedRelease {
@@ -218,7 +237,7 @@ export async function publishRelease(options: PublishOptions): Promise<Published
   const uploadOrPassThrough = async (reference: string): Promise<string> =>
     signOnly ? reference : upload(reference);
 
-  const pool = new SimplePool();
+  const pool: RelayPool = options.pool ?? new SimplePool();
   try {
     // Narrowed by the guard above: check mode has already returned.
     const signer = options.signer;
@@ -229,7 +248,10 @@ export async function publishRelease(options: PublishOptions): Promise<Published
       if (signOnly) {
         log(`signed kind ${template.kind} ${signed.id.slice(0, 16)}… (not published)`);
       } else {
-        await pool.publish(options.relays, signed);
+        // One promise per relay, so every one has to be awaited or a rejected
+        // publish becomes an unhandled rejection and the "published" line below
+        // is printed for an event no relay has accepted.
+        await Promise.all(pool.publish(options.relays, signed));
         log(`published kind ${template.kind} ${signed.id.slice(0, 16)}…`);
       }
       return signed;

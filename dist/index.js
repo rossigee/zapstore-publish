@@ -15068,7 +15068,7 @@ var relayTransport = async (pointer, identity) => {
   );
   return {
     async publish(request) {
-      await pool.publish(pointer.relays, finalizeEvent(request, identity.secret));
+      await Promise.all(pool.publish(pointer.relays, finalizeEvent(request, identity.secret)));
     },
     onResponse(next) {
       handler = next;
@@ -16323,6 +16323,7 @@ function buildSoftwareAssetEvent(input2) {
   for (const platform of input2.platforms) tags.push(["f", platform]);
   if (input2.minSdkVersion !== void 0) tags.push(["min_platform_version", String(input2.minSdkVersion)]);
   if (input2.targetSdkVersion !== void 0) tags.push(["target_platform_version", String(input2.targetSdkVersion)]);
+  if (input2.versionCode !== void 0) tags.push(["version_code", String(input2.versionCode)]);
   if (input2.certificateSha256) tags.push(["apk_certificate_hash", input2.certificateSha256]);
   return {
     kind: KIND_SOFTWARE_ASSET,
@@ -16598,7 +16599,7 @@ async function publishRelease(options) {
     throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
   }
   const uploadOrPassThrough = async (reference) => signOnly ? reference : upload(reference);
-  const pool = new SimplePool();
+  const pool = options.pool ?? new SimplePool();
   try {
     const signer = options.signer;
     if (!signer) throw new PublishError("a signer is required to publish");
@@ -16607,7 +16608,7 @@ async function publishRelease(options) {
       if (signOnly) {
         log2(`signed kind ${template.kind} ${signed.id.slice(0, 16)}\u2026 (not published)`);
       } else {
-        await pool.publish(options.relays, signed);
+        await Promise.all(pool.publish(options.relays, signed));
         log2(`published kind ${template.kind} ${signed.id.slice(0, 16)}\u2026`);
       }
       return signed;
