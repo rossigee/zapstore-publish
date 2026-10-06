@@ -15068,7 +15068,7 @@ var relayTransport = async (pointer, identity) => {
   );
   return {
     async publish(request) {
-      await pool.publish(pointer.relays, finalizeEvent(request, identity.secret));
+      await Promise.all(pool.publish(pointer.relays, finalizeEvent(request, identity.secret)));
     },
     onResponse(next) {
       handler = next;
@@ -16598,7 +16598,7 @@ async function publishRelease(options) {
     throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
   }
   const uploadOrPassThrough = async (reference) => signOnly ? reference : upload(reference);
-  const pool = new SimplePool();
+  const pool = options.pool ?? new SimplePool();
   try {
     const signer = options.signer;
     if (!signer) throw new PublishError("a signer is required to publish");
@@ -16607,7 +16607,7 @@ async function publishRelease(options) {
       if (signOnly) {
         log2(`signed kind ${template.kind} ${signed.id.slice(0, 16)}\u2026 (not published)`);
       } else {
-        await pool.publish(options.relays, signed);
+        await Promise.all(pool.publish(options.relays, signed));
         log2(`published kind ${template.kind} ${signed.id.slice(0, 16)}\u2026`);
       }
       return signed;
