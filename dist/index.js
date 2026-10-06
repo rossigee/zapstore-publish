@@ -12346,6 +12346,16 @@ try {
   _WebSocket = WebSocket;
 } catch {
 }
+var Relay = class extends AbstractRelay {
+  constructor(url, options) {
+    super(url, { verifyEvent, websocketImplementation: _WebSocket, ...options });
+  }
+  static async connect(url, options) {
+    const relay = new Relay(url, options);
+    await relay.connect(options);
+    return relay;
+  }
+};
 var M = 256;
 var HLL_HEX_LENGTH = M * 2;
 var utf8Encoder2 = new TextEncoder();
@@ -16355,6 +16365,57 @@ function buildSoftwareReleaseEvent(input2) {
   };
 }
 
+// src/nostr/publisher.ts
+var PUBLISH_TIMEOUT_MS = 3e4;
+function isPublishTimeout(error) {
+  return error instanceof Error && error.message === "publish timed out";
+}
+var RelayPublisher = class {
+  relays = /* @__PURE__ */ new Map();
+  timeoutMs;
+  constructor(timeoutMs = PUBLISH_TIMEOUT_MS) {
+    this.timeoutMs = timeoutMs;
+  }
+  relayFor(url) {
+    let relay = this.relays.get(url);
+    if (!relay) {
+      relay = new Relay(url, { enablePing: true });
+      relay.publishTimeout = this.timeoutMs;
+      this.relays.set(url, relay);
+    }
+    return relay;
+  }
+  /** One promise per relay, matching `SimplePool.publish` for callers. */
+  publish(relays, event) {
+    return relays.map(async (url) => {
+      const relay = this.relayFor(url);
+      if (!relay.connected) {
+        await relay.connect();
+      }
+      return relay.publish(event);
+    });
+  }
+  /** Closes every connection this publisher opened. */
+  close() {
+    for (const relay of this.relays.values()) {
+      try {
+        void relay.close();
+      } catch {
+      }
+    }
+    this.relays.clear();
+  }
+};
+async function awaitAcknowledgement(attempt) {
+  try {
+    await Promise.all(attempt());
+    return;
+  } catch (first) {
+    if (!isPublishTimeout(first)) throw first;
+  }
+  await Promise.all(attempt());
+}
+
 // src/source.ts
 import { readFile as readFile2 } from "node:fs/promises";
 var SourceError = class extends Error {
@@ -16517,6 +16578,15 @@ function inspectApk(apk) {
     platforms: platformsForArchitectures(nativeArchitectures(apk))
   };
 }
+function defaultPool() {
+  const publisher = new RelayPublisher();
+  return {
+    publish: (relays, event) => publisher.publish(relays, event),
+    // RelayPublisher owns its connections and closes them all; the relay list is
+    // only meaningful to SimplePool, which is why it is ignored here.
+    close: () => publisher.close()
+  };
+}
 function pubkeyToHex(value) {
   if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
   const decoded = nip19_exports.decode(value);
@@ -16599,7 +16669,7 @@ async function publishRelease(options) {
     throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
   }
   const uploadOrPassThrough = async (reference) => signOnly ? reference : upload(reference);
-  const pool = options.pool ?? new SimplePool();
+  const pool = options.pool ?? defaultPool();
   try {
     const signer = options.signer;
     if (!signer) throw new PublishError("a signer is required to publish");
@@ -16608,7 +16678,7 @@ async function publishRelease(options) {
       if (signOnly) {
         log2(`signed kind ${template.kind} ${signed.id.slice(0, 16)}\u2026 (not published)`);
       } else {
-        await Promise.all(pool.publish(options.relays, signed));
+        await awaitAcknowledgement(() => pool.publish(options.relays, signed));
         log2(`published kind ${template.kind} ${signed.id.slice(0, 16)}\u2026`);
       }
       return signed;

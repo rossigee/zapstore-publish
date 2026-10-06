@@ -9,7 +9,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { unzipSync } from "fflate";
-import { SimplePool, nip19, type EventTemplate, type VerifiedEvent } from "nostr-tools";
+import { nip19, type EventTemplate, type VerifiedEvent } from "nostr-tools";
 
 import { readManifest } from "./apk/manifest.ts";
 import { signingCertificateSha256 } from "./apk/signing-block.ts";
@@ -22,6 +22,7 @@ import {
   buildSoftwareReleaseEvent,
   platformsForArchitectures,
 } from "./nostr/events.ts";
+import { RelayPublisher, awaitAcknowledgement } from "./nostr/publisher.ts";
 import type { Signer } from "./nostr/signer.ts";
 import { resolveApk, type ResolvedApk } from "./source.ts";
 
@@ -89,22 +90,32 @@ export interface PublishOptions {
   /**
    * Overrides the relay pool. Injected rather than constructed inline so the
    * publishing path can be tested without a live relay, which is where the
-   * behaviour that matters lives: `SimplePool.publish` returns one promise per
-   * relay, and nothing else in this file is worth a network.
+   * behaviour that matters lives: publishing returns one promise per relay and
+   * every one has to be awaited, and nothing else in this file is worth a network.
    */
   pool?: RelayPool;
 }
 
 /**
- * The subset of nostr-tools' SimplePool that publishing depends on.
+ * The subset of a relay pool that publishing depends on.
  *
- * `publish` is declared to return an *array* of promises, one per relay, and
- * the implementation really does return `relays.map(async …)`. Awaiting that
- * array directly awaits nothing.
+ * `publish` returns an *array* of promises, one per relay. Awaiting that array
+ * directly awaits nothing, which is why callers go through awaitAcknowledgement.
  */
 export interface RelayPool {
   publish(relays: string[], event: VerifiedEvent): Promise<unknown>[];
   close(relays: string[]): void;
+}
+
+/** The production pool. Raises the acknowledgement deadline, which SimplePool cannot. */
+function defaultPool(): RelayPool {
+  const publisher = new RelayPublisher();
+  return {
+    publish: (relays, event) => publisher.publish(relays, event),
+    // RelayPublisher owns its connections and closes them all; the relay list is
+    // only meaningful to SimplePool, which is why it is ignored here.
+    close: () => publisher.close(),
+  };
 }
 
 export interface PublishedRelease {
@@ -237,7 +248,7 @@ export async function publishRelease(options: PublishOptions): Promise<Published
   const uploadOrPassThrough = async (reference: string): Promise<string> =>
     signOnly ? reference : upload(reference);
 
-  const pool: RelayPool = options.pool ?? new SimplePool();
+  const pool: RelayPool = options.pool ?? defaultPool();
   try {
     // Narrowed by the guard above: check mode has already returned.
     const signer = options.signer;
@@ -248,10 +259,10 @@ export async function publishRelease(options: PublishOptions): Promise<Published
       if (signOnly) {
         log(`signed kind ${template.kind} ${signed.id.slice(0, 16)}… (not published)`);
       } else {
-        // One promise per relay, so every one has to be awaited or a rejected
-        // publish becomes an unhandled rejection and the "published" line below
-        // is printed for an event no relay has accepted.
-        await Promise.all(pool.publish(options.relays, signed));
+        // Every relay has to acknowledge, or the "published" line below is a lie.
+        // A timeout is retried once: the relay may have stored the event and just
+        // been slow, and republishing is idempotent because the id is content-derived.
+        await awaitAcknowledgement(() => pool.publish(options.relays, signed));
         log(`published kind ${template.kind} ${signed.id.slice(0, 16)}…`);
       }
       return signed;
