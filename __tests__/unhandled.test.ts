@@ -110,6 +110,59 @@ describe("unhandled rejection guard", () => {
     assert.match(written[0]!, /just a string/);
   });
 
+  // The send-on-closed-connection rejection embeds the entire serialised
+  // event, so logging it verbatim buried the run output in a multi-kilobyte
+  // line that said nothing the operator could act on.
+  describe("teardown noise logging", () => {
+    const noise = new Error(
+      `SendingOnClosedConnection: Tried to send message '["EVENT",{"kind":32267,"content":"${"x".repeat(5000)}"}]' on a closed connection to wss://relay.zapstore.dev/.`,
+    );
+
+    const loggedFor = (reason: unknown): string[] => {
+      const logged: string[] = [];
+      beginTeardown();
+      try {
+        createUnhandledRejectionHandler((m) => logged.push(m), () => {}, () => {})(reason);
+      } finally {
+        resetTeardown();
+      }
+      return logged;
+    };
+
+    test("summarises the rejection by name, without debug logging", () => {
+      delete process.env.RUNNER_DEBUG;
+      delete process.env.ACTIONS_STEP_DEBUG;
+
+      const [line] = loggedFor(noise);
+
+      assert.equal(line, "ignored relay teardown noise: SendingOnClosedConnection; enable debug logging for the full message");
+    });
+
+    test("logs the full message when debug logging is on", () => {
+      process.env.RUNNER_DEBUG = "1";
+      try {
+        const [line] = loggedFor(noise);
+
+        assert.match(line!, /Tried to send message/);
+        assert.match(line!, /closed connection to wss:\/\/relay\.zapstore\.dev\//);
+      } finally {
+        delete process.env.RUNNER_DEBUG;
+      }
+    });
+
+    test("leaves a colon-free message intact", () => {
+      delete process.env.RUNNER_DEBUG;
+      delete process.env.ACTIONS_STEP_DEBUG;
+
+      const [line] = loggedFor(new Error("relay connection closed by us"));
+
+      assert.equal(
+        line,
+        "ignored relay teardown noise: relay connection closed by us; enable debug logging for the full message",
+      );
+    });
+  });
+
   test("installs and detaches from the process", () => {
     const detach = installUnhandledRejectionGuard(() => {}, () => {});
     assert.equal(process.listenerCount("unhandledRejection") > 0, true);

@@ -30,6 +30,27 @@ function messageOf(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
 }
 
+/**
+ * GitHub Actions sets RUNNER_DEBUG=1 when the workflow enables debug logging,
+ * and ACTIONS_STEP_DEBUG=1 when it is enabled for this step alone.
+ */
+function debugEnabled(): boolean {
+  return process.env.RUNNER_DEBUG === "1" || process.env.ACTIONS_STEP_DEBUG === "1";
+}
+
+/**
+ * A send-on-closed-connection rejection embeds the whole serialised event, so
+ * its message runs to thousands of characters of app description, screenshot
+ * URLs and signatures. None of it is actionable: the only part that identifies
+ * the rejection is the error name ahead of the first colon, and the operator
+ * already knows the publishes succeeded, since the guard only tolerates these
+ * after the last publish has resolved.
+ */
+function summariseNoise(message: string): string {
+  const [name] = message.split(":", 1);
+  return `${name === message ? message : name}; enable debug logging for the full message`;
+}
+
 // Both require a real Error: nostr-tools throws Error objects, and matching a
 // bare string or an arbitrary object that happens to contain the text would
 // widen the tolerated set for no reason.
@@ -65,7 +86,8 @@ export function createUnhandledRejectionHandler(
   return (reason: unknown): void => {
     const message = messageOf(reason);
     if (isBenignRelayClose(reason) || (tearingDown && isTeardownNoise(reason))) {
-      log(`ignored relay teardown noise: ${message}`);
+      const detail = debugEnabled() ? message : summariseNoise(message);
+      log(`ignored relay teardown noise: ${detail}`);
       return;
     }
     write(`::error::unhandled rejection: ${reason instanceof Error ? reason.stack : message}\n`);
