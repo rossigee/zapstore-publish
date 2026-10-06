@@ -16613,7 +16613,7 @@ async function publishRelease(options) {
       }
       return signed;
     };
-    const appEventTemplate = (icon, images) => buildSoftwareAppEvent({
+    const appEventTemplate = (icon, images, at = createdAt) => buildSoftwareAppEvent({
       packageId: manifest.package,
       name: config.name ?? manifest.label ?? manifest.package,
       description: config.description ?? "",
@@ -16626,7 +16626,7 @@ async function publishRelease(options) {
       platforms,
       license: config.license,
       communities: config.communities,
-      createdAt
+      createdAt: at
     });
     await sign(appEventTemplate(void 0, []));
     const apkUrl = signOnly ? apk.url ?? apkSha256 : apk.url ?? await upload(apk.origin);
@@ -16663,7 +16663,7 @@ async function publishRelease(options) {
         createdAt
       })
     );
-    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls));
+    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls, Math.floor(Date.now() / 1e3)));
     return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {
     if (!signOnly) {
