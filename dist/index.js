@@ -16216,6 +16216,13 @@ var TEARDOWN_MESSAGES = ["SendingOnClosedConnection", "closed connection"];
 function messageOf(reason) {
   return reason instanceof Error ? reason.message : String(reason);
 }
+function debugEnabled() {
+  return process.env.RUNNER_DEBUG === "1" || process.env.ACTIONS_STEP_DEBUG === "1";
+}
+function summariseNoise(message) {
+  const [name] = message.split(":", 1);
+  return `${name === message ? message : name}; enable debug logging for the full message`;
+}
 function isBenignRelayClose(reason) {
   return reason instanceof Error && BENIGN_MESSAGES.some((m) => reason.message.includes(m));
 }
@@ -16230,7 +16237,8 @@ function createUnhandledRejectionHandler(log2, write, fail) {
   return (reason) => {
     const message = messageOf(reason);
     if (isBenignRelayClose(reason) || tearingDown && isTeardownNoise(reason)) {
-      log2(`ignored relay teardown noise: ${message}`);
+      const detail = debugEnabled() ? message : summariseNoise(message);
+      log2(`ignored relay teardown noise: ${detail}`);
       return;
     }
     write(`::error::unhandled rejection: ${reason instanceof Error ? reason.stack : message}
