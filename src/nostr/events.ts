@@ -154,6 +154,10 @@ export function buildSoftwareAssetEvent(input: SoftwareAssetInput): EventTemplat
   for (const platform of input.platforms) tags.push(["f", platform]);
   if (input.minSdkVersion !== undefined) tags.push(["min_platform_version", String(input.minSdkVersion)]);
   if (input.targetSdkVersion !== undefined) tags.push(["target_platform_version", String(input.targetSdkVersion)]);
+  // Required by the relay for any asset carrying an android- platform, which
+  // rejects the event outright without it. Zapstore records the version code but
+  // does not compare it, so it has to be the real one from the APK regardless.
+  if (input.versionCode !== undefined) tags.push(["version_code", String(input.versionCode)]);
   if (input.certificateSha256) tags.push(["apk_certificate_hash", input.certificateSha256]);
 
   return {

@@ -136,11 +136,88 @@ export interface GitHubOptions {
   token?: string;
   match?: string;
   fetchImpl?: typeof fetch;
+  /**
+   * Deadline for each attempt. Defaults to {@link GITHUB_TIMEOUT_MS}.
+   *
+   * Settable so a test can exercise a hung socket in milliseconds rather than
+   * waiting out the production deadline.
+   */
+  timeoutMs?: number;
 }
 
 /**
  * Lists the repository's releases, newest first, using the GitHub REST API.
  */
+/**
+ * Deadline for a GitHub API call, in milliseconds.
+ *
+ * A hung socket otherwise holds the step until the job timeout, which defaults
+ * to six hours. A release listing answers in well under a second, so anything
+ * past this is a connection problem rather than a slow one.
+ */
+export const GITHUB_TIMEOUT_MS = 30_000;
+
+/**
+ * How many times to retry a failed GitHub call.
+ *
+ * Only for requests that are safe to repeat: both are GETs, so a retry after a
+ * dropped connection cannot duplicate anything.
+ */
+const GITHUB_ATTEMPTS = 3;
+
+/** Delay before each retry, doubling: 0, then 500ms, then 1s. */
+const RETRY_BASE_MS = 500;
+
+/**
+ * Waits between retries, so a transient 5xx or reset connection does not fail a
+ * release. The sleep is skipped after the last attempt.
+ */
+async function backoff(attempt: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, RETRY_BASE_MS * 2 ** attempt));
+}
+
+/**
+ * Runs a request, retrying on a transport error, a 5xx or a 429.
+ *
+ * A 4xx other than 429 is not retried: the request is wrong, and repeating it
+ * only delays the error. GitHub sends `Retry-After` on a rate limit, and it is
+ * honoured up to a point, since a wait longer than the step's own timeout is
+ * better reported as a rate limit than absorbed silently.
+ */
+async function request(
+  url: string,
+  init: RequestInit,
+  doFetch: typeof fetch,
+  timeoutMs: number,
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < GITHUB_ATTEMPTS; attempt++) {
+    if (attempt > 0) await backoff(attempt - 1);
+
+    try {
+      // A fresh signal per attempt, so a timeout cannot be carried over from a
+      // previous one and expire immediately.
+      const response = await doFetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      if (response.ok) return response;
+
+      const retryable = response.status >= 500 || response.status === 429;
+      if (!retryable || attempt === GITHUB_ATTEMPTS - 1) return response;
+
+      const retryAfter = Number(response.headers.get("retry-after"));
+      if (Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter * 1000 <= timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
+      }
+    } catch (cause) {
+      // A timeout abort surfaces here, as does a reset or refused connection.
+      lastError = cause;
+      if (attempt === GITHUB_ATTEMPTS - 1) throw cause;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(`request to ${url} failed`);
+}
+
 export async function listReleases(options: GitHubOptions): Promise<GithubRelease[]> {
   const { owner, repo } = parseGitHubRepository(options.repository);
   const doFetch = options.fetchImpl ?? fetch;
@@ -152,7 +229,7 @@ export async function listReleases(options: GitHubOptions): Promise<GithubReleas
   };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
 
-  const response = await doFetch(url, { headers });
+  const response = await request(url, { headers }, doFetch, options.timeoutMs ?? GITHUB_TIMEOUT_MS);
   if (!response.ok) {
     throw new SourceError(
       `listing releases for ${owner}/${repo} failed with ${response.status}${
@@ -208,7 +285,7 @@ export async function downloadAsset(
 
   if (!url) throw new SourceError(`asset ${asset.name} has no download URL`);
 
-  const response = await doFetch(url, { headers });
+  const response = await request(url, { headers }, doFetch, options.timeoutMs ?? GITHUB_TIMEOUT_MS);
   if (!response.ok) {
     throw new SourceError(`downloading ${asset.name} failed with ${response.status}`);
   }

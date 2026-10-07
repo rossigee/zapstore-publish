@@ -99,6 +99,14 @@ describe("software asset event (3063)", () => {
     assert.equal(tagValue(event, "apk_certificate_hash"), "b".repeat(64));
   });
 
+  // Regression: the relay rejects any asset event carrying an android- platform
+  // and no version_code, with "missing or empty 'version_code' tag (required for
+  // Android)". The rejection surfaced as a greyed-out Install button, because the
+  // release event was accepted and pointed at an asset that did not exist.
+  test("records the version code, which the relay requires for Android", () => {
+    assert.equal(tagValue(event, "version_code"), "3");
+  });
+
   test("keeps release notes in the content", () => {
     assert.equal(event.content, "Release notes here");
   });

@@ -15068,7 +15068,7 @@ var relayTransport = async (pointer, identity) => {
   );
   return {
     async publish(request) {
-      await pool.publish(pointer.relays, finalizeEvent(request, identity.secret));
+      await Promise.all(pool.publish(pointer.relays, finalizeEvent(request, identity.secret)));
     },
     onResponse(next) {
       handler = next;
@@ -16216,6 +16216,13 @@ var TEARDOWN_MESSAGES = ["SendingOnClosedConnection", "closed connection"];
 function messageOf(reason) {
   return reason instanceof Error ? reason.message : String(reason);
 }
+function debugEnabled() {
+  return process.env.RUNNER_DEBUG === "1" || process.env.ACTIONS_STEP_DEBUG === "1";
+}
+function summariseNoise(message) {
+  const [name] = message.split(":", 1);
+  return `${name === message ? message : name}; enable debug logging for the full message`;
+}
 function isBenignRelayClose(reason) {
   return reason instanceof Error && BENIGN_MESSAGES.some((m) => reason.message.includes(m));
 }
@@ -16230,7 +16237,8 @@ function createUnhandledRejectionHandler(log2, write, fail) {
   return (reason) => {
     const message = messageOf(reason);
     if (isBenignRelayClose(reason) || tearingDown && isTeardownNoise(reason)) {
-      log2(`ignored relay teardown noise: ${message}`);
+      const detail = debugEnabled() ? message : summariseNoise(message);
+      log2(`ignored relay teardown noise: ${detail}`);
       return;
     }
     write(`::error::unhandled rejection: ${reason instanceof Error ? reason.stack : message}
@@ -16315,6 +16323,7 @@ function buildSoftwareAssetEvent(input2) {
   for (const platform of input2.platforms) tags.push(["f", platform]);
   if (input2.minSdkVersion !== void 0) tags.push(["min_platform_version", String(input2.minSdkVersion)]);
   if (input2.targetSdkVersion !== void 0) tags.push(["target_platform_version", String(input2.targetSdkVersion)]);
+  if (input2.versionCode !== void 0) tags.push(["version_code", String(input2.versionCode)]);
   if (input2.certificateSha256) tags.push(["apk_certificate_hash", input2.certificateSha256]);
   return {
     kind: KIND_SOFTWARE_ASSET,
@@ -16590,7 +16599,7 @@ async function publishRelease(options) {
     throw new PublishError("a locally built APK needs a Blossom URL to be uploaded to");
   }
   const uploadOrPassThrough = async (reference) => signOnly ? reference : upload(reference);
-  const pool = new SimplePool();
+  const pool = options.pool ?? new SimplePool();
   try {
     const signer = options.signer;
     if (!signer) throw new PublishError("a signer is required to publish");
@@ -16599,12 +16608,12 @@ async function publishRelease(options) {
       if (signOnly) {
         log2(`signed kind ${template.kind} ${signed.id.slice(0, 16)}\u2026 (not published)`);
       } else {
-        await pool.publish(options.relays, signed);
+        await Promise.all(pool.publish(options.relays, signed));
         log2(`published kind ${template.kind} ${signed.id.slice(0, 16)}\u2026`);
       }
       return signed;
     };
-    const appEventTemplate = (icon, images) => buildSoftwareAppEvent({
+    const appEventTemplate = (icon, images, at = createdAt) => buildSoftwareAppEvent({
       packageId: manifest.package,
       name: config.name ?? manifest.label ?? manifest.package,
       description: config.description ?? "",
@@ -16617,7 +16626,7 @@ async function publishRelease(options) {
       platforms,
       license: config.license,
       communities: config.communities,
-      createdAt
+      createdAt: at
     });
     await sign(appEventTemplate(void 0, []));
     const apkUrl = signOnly ? apk.url ?? apkSha256 : apk.url ?? await upload(apk.origin);
@@ -16654,7 +16663,7 @@ async function publishRelease(options) {
         createdAt
       })
     );
-    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls));
+    const appEvent = await sign(appEventTemplate(iconUrl, imageUrls, Math.floor(Date.now() / 1e3)));
     return { ...base, appEvent, assetEvent, releaseEvent, published: !signOnly };
   } finally {
     if (!signOnly) {
